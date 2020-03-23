@@ -1,0 +1,971 @@
+---
+title: "Análisis Evolución COVID-19"
+output:
+  html_document:
+    keep_md: true
+    highlight: tango
+    theme: united
+    toc: yes
+    toc_float:
+      collapsed: no
+      smooth_scroll: no
+    df_print: paged
+    number_sections: true
+---
+
+
+```{r setup, echo = FALSE, warning = FALSE, error = FALSE, message = FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, error = FALSE, message = FALSE )
+library(tidyverse)
+library(broom)
+library(plotly)
+library(rgdal)
+library(leaflet)
+```
+
+
+Datos Internacionales
+
+https://github.com/CSSEGISandData/COVID-19
+
+Datos España
+
+https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master
+
+Datadista: 
+
+https://github.com/datadista/datasets/tree/master/COVID%2019
+https://github.com/datadista/datasets/blob/master/COVID%2019/ccaa_covid19_casos.csv
+
+
+
+```{r}
+# Internacionales 
+
+confirmados <- readr::read_csv("https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_19-covid-Confirmed.csv")
+
+muertes <- readr::read_csv("https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_19-covid-Deaths.csv")
+
+recuperados <- readr::read_csv("https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_19-covid-Recovered.csv")
+
+```
+
+
+```{r}
+data <- bind_rows(
+  confirmados %>% gather(key="Date",value="num",-(1:4)) %>% mutate(tipo="confirmados") %>% select(tipo,everything()),
+  muertes %>% gather(key="Date",value="num",-(1:4)) %>% mutate(tipo="muertes") %>% select(tipo,everything()),
+  recuperados %>% gather(key="Date",value="num",-(1:4)) %>% mutate(tipo="recuperados") %>% select(tipo,everything())
+)
+
+data <- data %>% mutate(Date=as.Date(Date,format="%m/%d/%y"))
+data_w <- data %>% pivot_wider(id_cols = c("Country/Region","Province/State","Date"), names_from = "tipo", values_from = "num")
+data_w <- data_w %>% mutate(activos = confirmados - recuperados -muertes)
+```
+
+# Totales por País y Provincia
+
+```{r}
+(last_data <- data %>% group_by(tipo,`Province/State`,`Country/Region`) %>% filter(Date==max(Date)) %>% arrange(tipo,desc(num)) %>% select(-Lat,-Long))
+
+```
+
+
+## Total por país
+
+```{r}
+(tot_country <- last_data %>% group_by(tipo,`Country/Region`) %>% summarise(num=sum(num)) %>% arrange(tipo,desc(num)))
+```
+
+
+## Tasas de Mortalidad
+
+```{r}
+tasas_tot <- tot_country %>% spread(key=tipo,value=num) 
+#tasas_tot <- tasas_tot %>% mutate_if(is.integer,as.numeric) 
+tasas_tot <- tasas_tot %>%  mutate(mort_rate = muertes/confirmados, rec_rate=recuperados/confirmados)
+tasas_tot <- tasas_tot %>% arrange(desc(confirmados))
+tasas_tot
+```
+
+
+Agregate by country and date
+
+```{r}
+ev_ctry <- data %>% group_by(`Country/Region`,Date, tipo) %>% summarise(num=sum(num))
+ev_ctry_w <- data_w %>% group_by(`Country/Region`,Date) %>% summarise_at(.vars=vars(confirmados:activos),sum)
+```
+
+
+Casos confirmados
+
+```{r}
+sel.ctry = tasas_tot$`Country/Region`[1:10]
+
+ggplot(ev_ctry %>% filter(`Country/Region` %in% sel.ctry, tipo=="confirmados")) + geom_line(aes(Date,num, group=1)) +
+  facet_wrap(~`Country/Region`, scales="free") + scale_y_log10()
+```
+Casos activos
+
+```{r}
+sel.ctry = tasas_tot$`Country/Region`[1:10]
+
+ggplot(ev_ctry_w %>% filter(`Country/Region` %in% sel.ctry)) + geom_line(aes(Date,activos, group=1)) +
+  facet_wrap(~`Country/Region`, scales="free") 
+
+ggplot(ev_ctry_w %>% filter(`Country/Region` %in% sel.ctry)) + geom_line(aes(Date,activos, group=1)) +
+  facet_wrap(~`Country/Region`, scales="free") + scale_y_log10()
+```
+
+# Evolucion casos
+
+```{r}
+sel_ctrys <- c("Spain", "Italy", "France", "US", "Germany", "United Kingdom")
+data_casos = ev_ctry %>% filter(`Country/Region` %in% sel_ctrys, Date>= "2020-03-01", tipo=="confirmados")
+
+data_casos$num[data_casos$tipo=="confirmados" & data_casos$Date==as.Date("2020-03-12") & data_casos$`Country/Region`=="Spain"] = 3400
+data_casos$num[data_casos$tipo=="confirmados" & data_casos$Date==as.Date("2020-03-12") & data_casos$`Country/Region`=="Italy"] = NA
+data_casos$num[data_casos$tipo=="confirmados" & data_casos$Date==as.Date("2020-03-12") & data_casos$`Country/Region`=="France"] = NA
+
+# data <- bind_rows(data, tibble(Date=as.Date("2020-03-13"), `Country/Region`="Spain", tipo="confirmados", num=4209),
+#                   tibble(Date=as.Date("2020-03-13"), `Country/Region`="Italy", tipo="confirmados", num=15113),
+#                   )
+
+
+# Hacer Gráfico dinámico - 
+
+p <- ggplot(data_casos) + geom_point(aes(Date,num, color=`Country/Region`)) + 
+  geom_line(aes(Date,num, color=`Country/Region`), size=0.25,alpha=0.2) + 
+  scale_color_brewer(palette="Set1")#
+#plotly::ggplotly(p,dynamicTicks=TRUE)
+p
+
+p <- ggplot(data_casos) + geom_point(aes(Date,num, color=`Country/Region`)) + 
+  geom_line(aes(Date,num, color=`Country/Region`), size=0.25,alpha=0.2) + 
+  scale_y_log10() +
+  scale_color_brewer(palette="Set1")#
+#plotly::ggplotly(p,dynamicTicks=TRUE)
+p
+```
+
+
+Exponential fits
+
+```{r}
+cut_fit_date = as.Date("2020-03-13")
+
+data_casos <- data_casos %>% group_by(`Country/Region`) %>% mutate(t=as.numeric(Date-min(Date)))
+
+data_casos_nest <- data_casos %>% nest(-`Country/Region`) %>% group_by(`Country/Region`) %>%  
+  mutate(
+    exp_mod_full = purrr::map(data, ~lm(log(num)~t, data= .)),
+    exp_mod_a = purrr::map(data, ~lm(log(num)~t, data= filter(., Date>=cut_fit_date))),
+    exp_mod_b = purrr::map(data, ~lm(log(num)~t, data= filter(., Date<cut_fit_date)))
+    )
+
+data_casos_nest <- data_casos_nest %>% mutate(tidied_full = purrr::map(exp_mod_full,broom::tidy),
+                                              tidied_a = purrr::map(exp_mod_a,broom::tidy), 
+                                              tidied_b = purrr::map(exp_mod_b,broom::tidy))
+
+
+
+
+```
+
+
+Full fit
+
+```{r}
+(coefs_full <- data_casos_nest %>% unnest(tidied_full) %>% select(`Country/Region`,term, estimate, std.error) %>% filter(term=="t") %>% 
+  mutate(dupl_t = log(2)/estimate))
+```
+
+Fit after `r as.character(cut_fit_date)`
+
+
+```{r}
+(coefs_a <- data_casos_nest %>% unnest(tidied_a) %>% select(`Country/Region`,term, estimate, std.error) %>% filter(term=="t") %>% 
+  mutate(dupl_t = log(2)/estimate))
+
+```
+
+
+Fit after `r as.character(cut_fit_date)`
+
+
+```{r}
+(coefs_b <- data_casos_nest %>% unnest(tidied_b) %>% select(`Country/Region`,term, estimate, std.error) %>% filter(term=="t") %>% 
+  mutate(dupl_t = log(2)/estimate))
+
+```
+
+Plot fits and future projections
+
+```{r, fig.width=10, fig.height=7}
+
+tmp =data_casos_nest %>% 
+  mutate(fitted_full=map(exp_mod_full,augment),fitted_a=map(exp_mod_a,augment),fitted_b=map(exp_mod_b,augment))
+  
+  
+tmp_full <- tmp %>% unnest(fitted_full) %>% mutate(fitted=exp(.fitted)) %>% 
+  select(`Country/Region`,t, fitted) %>%  mutate(Date=min(data_casos$Date) + t)
+
+tmp_a <- tmp %>% unnest(fitted_a) %>% mutate(fitted=exp(.fitted)) %>% 
+  select(`Country/Region`,t, fitted) %>%  mutate(Date=min(data_casos$Date) + t)
+
+tmp_b <- tmp %>% unnest(fitted_b) %>% mutate(fitted=exp(.fitted)) %>% 
+  select(`Country/Region`,t, fitted) %>%  mutate(Date=min(data_casos$Date) + t)
+
+
+
+
+# Prediccion con el modelo after
+
+future = crossing(data.frame(Date = seq(Sys.Date(),as.Date("2020-03-31"), by="days")),data.frame(Country=sel_ctrys))
+
+future <- future %>% mutate(t=as.numeric(Date-min(data_casos$Date)))
+
+
+future <- future %>% group_by(Country) %>% do({
+  df=.
+  ctry=df$Country[1]
+  #cat(ctry,"\n")
+  mod = data_casos_nest$exp_mod_a[data_casos_nest$`Country/Region`== ctry][[1]]
+  prdf <- predict.lm(mod,newdata = df,interval = "prediction")
+  prdf <- as.data.frame(prdf) %>% mutate_all(exp)
+  df <- bind_cols(df, prdf %>% dplyr::rename(pred=fit))
+  df
+  df
+})
+
+dupl_index_info_a <- tmp_a %>% left_join(coefs_a, by="Country/Region")  %>% 
+  group_by(`Country/Region`) %>% filter(t==max(t)) %>% ungroup()
+
+dupl_index_info_b <- tmp_b %>% left_join(coefs_b, by="Country/Region")  %>% 
+  group_by(`Country/Region`) %>% filter(t==min(t)) %>% ungroup()
+
+  
+ggplot(data_casos) + 
+  geom_point(aes(Date,num, color=`Country/Region`))  +
+  geom_ribbon(aes(Date,ymin=lwr, ymax=upr, group=Country), color="grey90", alpha=0.05,data=future) +
+  geom_line(aes(Date,fitted, color=`Country/Region`), data=tmp_b) + 
+  geom_line(aes(Date,fitted, color=`Country/Region`), data=tmp_a) +
+  geom_line(aes(Date,fitted, color=`Country/Region`), data=tmp_full, linetype=3, alpha=1) +
+  geom_line(aes(Date,pred, color=Country), linetype = 2, data=future) +
+  geom_vline(aes(xintercept = cut_fit_date), col = "white", size=3) +
+  ggrepel::geom_label_repel(aes(Date + 3, fitted*2, label=round(dupl_t,1), 
+                            color=`Country/Region`), fill="grey90", size=3 , alpha=1, data=dupl_index_info_a, segment.alpha = 0) +
+  ggrepel::geom_label_repel(aes(Date + 1, fitted*1.4, label=round(dupl_t,1), color=`Country/Region`), 
+                            size=3,  fill="grey90", alpha=0.8, data=dupl_index_info_b, segment.alpha = 0) +
+  geom_text(aes(x=cut_fit_date, y = 4e5, label=paste("Fits after and before" ,cut_fit_date,"\n Labels: duplication times in days")), size=3) +
+  scale_y_log10() + labs(x="",y="Casos Confirmados + Predicción (log10)") +
+  scale_color_brewer(palette="Set1")
+
+```
+
+### Tasa duplicación dinámica
+
+```{r}
+fit_window=7 # days
+first_date = as.Date("2020-03-07")
+
+fit_dates <- unique(data_casos$Date[data_casos$Date>=first_date])
+
+din_dupl <- data.frame(fdate= fit_dates) %>% group_by(fdate) %>% do({
+    fd = .$fdate
+    df <- data_casos %>%filter(Date<=fd, Date>fd-fit_window)
+    res <- df %>% nest(-`Country/Region`) %>% group_by(`Country/Region`) %>%  
+      mutate(exp_mod = purrr::map(data, ~lm(log(num)~t, data= .))) %>%
+      mutate(tidied = purrr::map(exp_mod,broom::tidy)) %>% 
+      unnest(tidied) %>% select(`Country/Region`,term, estimate, std.error) %>% filter(term=="t") %>% 
+        mutate(dupl_t = log(2)/estimate)
+})
+
+ggplot(din_dupl) + geom_point(aes(fdate,dupl_t, color=`Country/Region`)) +
+  geom_smooth(aes(fdate,dupl_t, color=`Country/Region`), se=FALSE, size=0.5, alpha=0.5, span=0.5) +
+    scale_color_brewer(palette="Set1") + labs(y="Tiempo de duplicación de casos (dias)", title="Tiempos de duplicacion en ventana movil de una semana antes de la fecha")
+
+```
+
+
+
+# Evolución muertes
+
+
+```{r}
+sel_ctrys <- c("Spain", "Italy", "France", "US", "Germany", "United Kingdom")
+
+data_muertes = ev_ctry %>% filter(`Country/Region` %in% sel_ctrys, Date>= "2020-03-01", tipo=="muertes")
+
+data_muertes$num[data_muertes$tipo=="confirmados" & data_muertes$Date==as.Date("2020-03-12") & data_muertes$`Country/Region`=="Spain"] = 3400
+data_muertes$num[data_muertes$tipo=="confirmados" & data_muertes$Date==as.Date("2020-03-12") & data_muertes$`Country/Region`=="Italy"] = NA
+data_muertes$num[data_muertes$tipo=="confirmados" & data_muertes$Date==as.Date("2020-03-12") & data_muertes$`Country/Region`=="France"] = NA
+
+# data <- bind_rows(data, tibble(Date=as.Date("2020-03-13"), `Country/Region`="Spain", tipo="confirmados", num=4209),
+#                   tibble(Date=as.Date("2020-03-13"), `Country/Region`="Italy", tipo="confirmados", num=15113),
+#                   )
+
+
+# Convert plot in dynamic
+
+
+p <- ggplot(data_muertes) + geom_point(aes(Date,num, color=`Country/Region`)) + scale_y_log10() +
+  scale_color_brewer(palette="Set1")#
+#plotly::ggplotly(p,dynamicTicks=TRUE)
+p
+```
+
+
+
+```{r}
+cut_fit_date = as.Date("2020-03-13")
+
+data_muertes <- data_muertes %>% group_by(`Country/Region`) %>% mutate(t=as.numeric(Date-min(Date))) %>% filter(num>0)
+
+data_muertes_nest <- data_muertes %>% nest(-`Country/Region`) %>% group_by(`Country/Region`) %>%  
+  mutate(
+    exp_mod_full = purrr::map(data, ~lm(log(num)~t, data= .)),
+    exp_mod_a = purrr::map(data, ~lm(log(num)~t, data= filter(., Date>=cut_fit_date))),
+    exp_mod_b = purrr::map(data, ~lm(log(num)~t, data= filter(., Date<cut_fit_date)))
+    )
+
+data_muertes_nest <- data_muertes_nest %>% mutate(tidied_full = purrr::map(exp_mod_full,broom::tidy),
+                                              tidied_a = purrr::map(exp_mod_a,broom::tidy), 
+                                              tidied_b = purrr::map(exp_mod_b,broom::tidy))
+
+
+
+
+```
+
+
+Full fit
+
+```{r}
+(coefsm_full <- data_muertes_nest %>% unnest(tidied_full) %>% select(`Country/Region`,term, estimate, std.error) %>% filter(term=="t") %>% 
+  mutate(dupl_t = log(2)/estimate))
+```
+
+Fit after `r as.character(cut_fit_date)`
+
+
+```{r}
+(coefsm_a <- data_muertes_nest %>% unnest(tidied_a) %>% select(`Country/Region`,term, estimate, std.error) %>% filter(term=="t") %>% 
+  mutate(dupl_t = log(2)/estimate))
+
+```
+
+
+Fit after `r as.character(cut_fit_date)`
+
+
+```{r}
+(coefsm_b <- data_muertes_nest %>% unnest(tidied_b) %>% select(`Country/Region`,term, estimate, std.error) %>% filter(term=="t") %>% 
+  mutate(dupl_t = log(2)/estimate))
+
+```
+
+Plot fits and future projections
+
+```{r, fig.width=10, fig.height=7}
+
+tmp =data_muertes_nest %>% 
+  mutate(fitted_full=map(exp_mod_full,augment),fitted_a=map(exp_mod_a,augment),fitted_b=map(exp_mod_b,augment))
+  
+  
+tmp_full <- tmp %>% unnest(fitted_full) %>% mutate(fitted=exp(.fitted)) %>% 
+  select(`Country/Region`,t, fitted) %>%  mutate(Date=min(data_muertes$Date) + t)
+
+tmp_a <- tmp %>% unnest(fitted_a) %>% mutate(fitted=exp(.fitted)) %>% 
+  select(`Country/Region`,t, fitted) %>%  mutate(Date=min(data_muertes$Date) + t)
+
+tmp_b <- tmp %>% unnest(fitted_b) %>% mutate(fitted=exp(.fitted)) %>% 
+  select(`Country/Region`,t, fitted) %>%  mutate(Date=min(data_muertes$Date) + t)
+
+
+
+
+# Prediccion con el modelo after
+
+future = crossing(data.frame(Date = seq(Sys.Date(),as.Date("2020-03-31"), by="days")),data.frame(Country=sel_ctrys))
+
+future <- future %>% mutate(t=as.numeric(Date-min(data_muertes$Date)))
+
+
+future <- future %>% group_by(Country) %>% do({
+  df=.
+  ctry=df$Country[1]
+  #cat(ctry,"\n")
+  mod = data_muertes_nest$exp_mod_a[data_muertes_nest$`Country/Region`== ctry][[1]]
+  prdf <- predict.lm(mod,newdata = df,interval = "prediction")
+  prdf <- as.data.frame(prdf) %>% mutate_all(exp)
+  df <- bind_cols(df, prdf %>% dplyr::rename(pred=fit))
+  df
+  df
+})
+
+dupl_index_info_a <- tmp_a %>% left_join(coefsm_a, by="Country/Region")  %>% 
+  group_by(`Country/Region`) %>% filter(t==max(t)) %>% ungroup()
+
+dupl_index_info_b <- tmp_b %>% left_join(coefsm_b, by="Country/Region")  %>% 
+  group_by(`Country/Region`) %>% filter(t==min(t)) %>% ungroup()
+
+  
+ggplot(data_muertes) + 
+  geom_point(aes(Date,num, color=`Country/Region`))  +
+  geom_ribbon(aes(Date,ymin=lwr, ymax=upr, group=Country), color="grey90", alpha=0.05,data=future) +
+  geom_line(aes(Date,fitted, color=`Country/Region`), data=tmp_b) + 
+  geom_line(aes(Date,fitted, color=`Country/Region`), data=tmp_a) +
+  geom_line(aes(Date,fitted, color=`Country/Region`), data=tmp_full, linetype=3, alpha=1) +
+  geom_line(aes(Date,pred, color=Country), linetype = 2, data=future) +
+  geom_vline(aes(xintercept = cut_fit_date), col = "white", size=3) +
+  ggrepel::geom_label_repel(aes(Date + 3, fitted*2, label=round(dupl_t,1), 
+                            color=`Country/Region`), fill="grey90", size=3 , alpha=1, data=dupl_index_info_a, segment.alpha = 0) +
+  ggrepel::geom_label_repel(aes(Date + 1, fitted*1.4, label=round(dupl_t,1), color=`Country/Region`), 
+                            size=3,  fill="grey90", alpha=0.8, data=dupl_index_info_b, segment.alpha = 0) +
+  geom_text(aes(x=cut_fit_date, y = 1e4, label=paste("Fits after and before" ,cut_fit_date,"\n Labels: duplication times in days")), size=3) +
+  scale_y_log10() + labs(x="",y="Deaths + Projection (log10)") +
+  scale_color_brewer(palette="Set1") +  
+  coord_cartesian(ylim=c(1, 5e4))
+
+
+```
+
+### Tasa duplicación dinámica
+
+```{r}
+fit_window=7 # days
+first_date = as.Date("2020-03-07")
+
+# Exclude Germany
+#data_muertes_sger <- data_muertes %>% filter(`Country/Region`!="Germany")
+
+fit_dates <- unique(data_muertes$Date[data_muertes$Date>=first_date])
+
+din_dupl_muertes <- data.frame(fdate= fit_dates) %>% group_by(fdate) %>% do({
+    fd = .$fdate
+    df <- data_muertes %>%filter(Date<=fd, Date>fd-fit_window)
+    res <- df %>% nest(-`Country/Region`) %>% group_by(`Country/Region`) %>%  
+      mutate(exp_mod = purrr::map(data, ~lm(log(num)~t, data= .))) %>%
+      mutate(tidied = purrr::map(exp_mod,broom::tidy)) %>% 
+      unnest(tidied) %>% select(`Country/Region`,term, estimate, std.error) %>% filter(term=="t") %>% 
+        mutate(dupl_t = log(2)/estimate)
+}) %>% mutate(dupl_t=ifelse(dupl_t>10,NA,dupl_t))
+
+ggplot(din_dupl_muertes) + geom_point(aes(fdate,dupl_t, color=`Country/Region`)) +
+  geom_smooth(aes(fdate,dupl_t, color=`Country/Region`), se=FALSE, size=0.5, alpha=0.5, span=0.5) +
+    scale_color_brewer(palette="Set1") + labs(y="Tiempo de duplicación de fallecidos (dias)", title="Tiempos de duplicacion en ventana movil de una semana antes de la fecha")
+
+```
+
+
+# Visualización desde el instante con 100 casos
+
+## Confirmados
+
+```{r}
+sel_ctrys <- c("Spain", "Italy", "France", "US", "Germany", "United Kingdom")
+#sel_ctrys = tasas_tot$`Country/Region`[1:6]
+
+nini=100
+
+data_casos_icom <-  ev_ctry %>% filter(`Country/Region` %in% sel_ctrys, num>= nini, tipo=="confirmados")
+data_casos_icom <- data_casos_icom %>% group_by(`Country/Region`) %>% mutate(ini_Date = min(Date), t=as.numeric(Date-min(Date)))
+
+
+
+data_casos_icom$num[data_casos_icom$tipo=="confirmados" & data_casos_icom$Date==as.Date("2020-03-12") & data_casos_icom$`Country/Region`=="Spain"] = NA
+data_casos_icom$num[data_casos_icom$tipo=="confirmados" & data_casos_icom$Date==as.Date("2020-03-12") & data_casos_icom$`Country/Region`=="Italy"] = NA
+data_casos_icom$num[data_casos_icom$tipo=="confirmados" & data_casos_icom$Date==as.Date("2020-03-12") & data_casos_icom$`Country/Region`=="France"] = NA
+# 
+# data <- bind_rows(data, tibble(Date=as.Date("2020-03-13"), `Country/Region`="Spain", tipo="confirmados", num=4209),
+#                   tibble(Date=as.Date("2020-03-13"), `Country/Region`="Italy", tipo="confirmados", num=15113),
+#                   )
+
+
+
+#Rescale to begin exactly from nini
+#data_casos_icom <- data_casos_icom %>% group_by(`Country/Region`) %>% mutate(num=nini*num/num[1]) %>% filter(t<30)
+
+
+ggplot(data_casos_icom %>% na.omit()) + geom_point(aes(t,num, color=`Country/Region`)) + 
+  geom_line(aes(t,num, color=`Country/Region`), size=0.1, alpha=0.5) + scale_y_log10() + 
+  labs(x="dias desde alcanzar 100 infectados", y="Casos Confimados") + scale_color_brewer(palette = "Set1")
+
+ggplot(data_casos_icom %>% na.omit()) + geom_point(aes(t,num, color=`Country/Region`)) + 
+  geom_line(aes(t,num, color=`Country/Region`), size=0.1, alpha=0.5)  + labs(x="dias desde alcanzar 100 infectados", y="Casos Confimados") + scale_color_brewer(palette = "Set1")
+
+```
+
+
+Incluyendo China
+
+
+```{r}
+sel_ctrys <- c("Spain", "Italy", "France", "US", "Germany", "United Kingdom", "China")
+#sel_ctrys = tasas_tot$`Country/Region`[1:6]
+
+nini=500
+
+data_casos_icom <-  ev_ctry %>% filter(`Country/Region` %in% sel_ctrys, num>= nini, tipo=="confirmados")
+data_casos_icom <- data_casos_icom %>% group_by(`Country/Region`) %>% mutate(ini_Date = min(Date), t=as.numeric(Date-min(Date)))
+
+
+
+data_casos_icom$num[data_casos_icom$tipo=="confirmados" & data_casos_icom$Date==as.Date("2020-03-12") & data_casos_icom$`Country/Region`=="Spain"] = NA
+data_casos_icom$num[data_casos_icom$tipo=="confirmados" & data_casos_icom$Date==as.Date("2020-03-12") & data_casos_icom$`Country/Region`=="Italy"] = NA
+data_casos_icom$num[data_casos_icom$tipo=="confirmados" & data_casos_icom$Date==as.Date("2020-03-12") & data_casos_icom$`Country/Region`=="France"] = NA
+# 
+# data <- bind_rows(data, tibble(Date=as.Date("2020-03-13"), `Country/Region`="Spain", tipo="confirmados", num=4209),
+#                   tibble(Date=as.Date("2020-03-13"), `Country/Region`="Italy", tipo="confirmados", num=15113),
+#                   )
+
+
+
+#Rescale to begin exactly from nini
+#data_casos_icom <- data_casos_icom %>% group_by(`Country/Region`) %>% mutate(num=nini*num/num[1]) %>% filter(t<30)
+
+
+ggplot(data_casos_icom %>% na.omit()) + geom_point(aes(t,num, color=`Country/Region`)) + 
+  geom_line(aes(t,num, color=`Country/Region`), size=0.1, alpha=0.5) + scale_y_log10() + 
+  coord_cartesian(xlim=c(0,30)) +
+  labs(x="Dias desde alcanzar 100 infectados", y="Casos Confimados") + scale_color_brewer(palette = "Set1")
+
+ggplot(data_casos_icom %>% na.omit()) + geom_point(aes(t,num, color=`Country/Region`)) + 
+  geom_line(aes(t,num, color=`Country/Region`), size=0.1, alpha=0.5)  + labs(x="Dias desde alcanzar 100 infectados", y="Casos Confimados") +
+  coord_cartesian(xlim=c(0,30)) +
+  scale_color_brewer(palette = "Set1")
+
+```
+
+
+## Fallecidos 
+
+
+```{r}
+sel_ctrys2 <- c("Spain", "Italy", "France", "US", "Germany", "United Kingdom", "China")
+#sel_ctrys = tasas_tot$`Country/Region`[1:6]
+
+
+
+data_deaths_icom2 <-  ev_ctry %>% filter(`Country/Region` %in% sel_ctrys2, tipo=="muertes")
+
+# Select the first date selected for casos
+first_date_casos <- data_casos_icom%>% group_by(`Country/Region`) %>%  filter(t==min(t))
+
+data_deaths_icom2 <- data_deaths_icom2 %>% left_join(first_date_casos %>% select(`Country/Region`, Date), by= "Country/Region", suffix=c("",".ini"))
+data_deaths_icom2 <- data_deaths_icom2 %>% filter(Date>Date.ini)
+
+data_deaths_icom2 <- data_deaths_icom2 %>% group_by(`Country/Region`) %>% mutate(ini_Date = min(Date), t=as.numeric(Date-min(Date)))
+
+
+data_deaths_icom2$num[data_deaths_icom2$tipo=="confirmados" & data_deaths_icom2$Date==as.Date("2020-03-12") & data_deaths_icom2$`Country/Region`=="Spain"] = NA
+data_deaths_icom2$num[data_deaths_icom2$tipo=="confirmados" & data_deaths_icom2$Date==as.Date("2020-03-12") & data_deaths_icom2$`Country/Region`=="Italy"] = NA
+data_deaths_icom2$num[data_deaths_icom2$tipo=="confirmados" & data_deaths_icom2$Date==as.Date("2020-03-12") & data_deaths_icom2$`Country/Region`=="France"] = NA
+# 
+# data <- bind_rows(data, tibble(Date=as.Date("2020-03-13"), `Country/Region`="Spain", tipo="confirmados", num=4209),
+#                   tibble(Date=as.Date("2020-03-13"), `Country/Region`="Italy", tipo="confirmados", num=15113),
+#                   )
+
+
+
+#Rescale to begin exactly from nini
+#data_casos_icom <- data_casos_icom %>% group_by(`Country/Region`) %>% mutate(num=nini*num/num[1]) %>% filter(t<30)
+
+
+ggplot(data_deaths_icom2 %>% na.omit()) + geom_point(aes(t,num, color=`Country/Region`)) + 
+  geom_line(aes(t,num, color=`Country/Region`), size=0.1, alpha=0.5) + scale_y_log10() + 
+  labs(x="dias desde alcanzar 100 infectados", y="Fallecidos") + scale_color_brewer(palette = "Set1") +
+  coord_cartesian(xlim=c(0,50))
+
+ggplot(data_deaths_icom2 %>% na.omit()) + geom_point(aes(t,num, color=`Country/Region`)) + 
+  geom_line(aes(t,num, color=`Country/Region`), size=0.1, alpha=0.5)  + labs(x="dias desde alcanzar 100 infectados", y="Fallecidos") + scale_color_brewer(palette = "Set1") +
+  coord_cartesian(xlim=c(0,50))
+
+```
+
+
+
+
+# España. Detalles por CCAA
+
+```{r, message=FALSE}
+# España CCAA
+url_base <- "https://raw.githubusercontent.com/datadista/datasets/master/COVID%2019/"
+confirmados_ccaa <- readr::read_csv(paste0(url_base,"/ccaa_covid19_casos.csv"))
+muertes_ccaa <- readr::read_csv(paste0(url_base,"/ccaa_covid19_fallecidos.csv"))
+recuperados_ccaa <- readr::read_csv(paste0(url_base,"/ccaa_covid19_altas.csv"))
+uci_ccaa <- readr::read_csv(paste0(url_base,"/ccaa_covid19_uci.csv"))
+
+```
+
+```{r}
+data_ccaa <- bind_rows(
+  confirmados_ccaa %>% gather(key="Date",value="num",-(1:2)) %>% mutate(tipo="confirmados") %>% select(tipo,everything()),
+  muertes_ccaa %>% gather(key="Date",value="num",-(1:2)) %>% mutate(tipo="muertes") %>% select(tipo,everything()),
+  recuperados_ccaa %>% gather(key="Date",value="num",-(1:2)) %>% mutate(tipo="recuperados") %>% select(tipo,everything()),
+  uci_ccaa %>% gather(key="Date",value="num",-(1:2)) %>% mutate(tipo="uci") %>% select(tipo,everything())
+)
+
+data_ccaa <- data_ccaa %>% mutate(Date=as.Date(Date,format="%d/%m/%Y"))
+
+```
+
+
+```{r}
+#poblacion CCAA
+pob_ccaa <- read.table("https://www.ine.es/jaxiT3/files/t/es/csv_bdsc/2915.csv",sep=";", encoding = "UTF-8", 
+                       col.names = c("CCAA","mun_size","periodo","pob"),header=TRUE,stringsAsFactors = FALSE)
+
+pob_ccaa<- pob_ccaa %>% filter(mun_size=="Total",periodo==max(periodo))
+# Convertir pob a numeric
+pob_ccaa<- pob_ccaa %>% mutate(pob= as.numeric(gsub("\\.","",pob)))
+
+# Dividir nombre CCAA en código y nombre
+pob_ccaa<- pob_ccaa %>% separate(CCAA, c("cod_ine", "CCAA"), " ")
+pob_ccaa<- pob_ccaa %>% mutate(CCAA= gsub(",","",CCAA))
+pob_ccaa$CCAA[pob_ccaa$cod_ine=="Total"]="Total"
+pob_ccaa$cod_ine[pob_ccaa$cod_ine=="Total"]="00"
+
+
+```
+
+
+```{r}
+# shp file CCAA
+shp_ccaa <- rgdal::readOGR(dsn="ccaa_shp",layer = "comunidades-autonomas-espanolas", stringsAsFactors = FALSE, encoding = "UTF-8", use_iconv = TRUE)
+names(shp_ccaa)[1]="cod_ine"
+
+```
+
+
+##  Casos
+
+```{r}
+tot_casos_ccaa <- data_ccaa %>% group_by(CCAA) %>% filter(tipo=="confirmados", Date==max(Date), !(CCAA %in% c("Ceuta","Melilla"))) 
+   
+# cases per 100000 hab
+tot_casos_ccaa <- tot_casos_ccaa %>% left_join(pob_ccaa %>% select(cod_ine,pob), by="cod_ine") %>% mutate(num_phab = 1e5*num/pob) %>% 
+  arrange(-num_phab)
+
+tot_casos_ccaa
+```
+
+### Mapa 
+
+```{r}
+library(leaflet)
+shpmap <- merge(shp_ccaa,tot_casos_ccaa, by=c("cod_ine")) 
+
+pal_casos <- colorNumeric("YlOrRd",shpmap$num_phab,
+                        na.color = "transparent")
+
+
+popup_dat <- paste0("<strong>CCAA: </strong>", 
+                            shpmap$CCAA,
+                            "<br><strong>Casos: </strong>", 
+                            round(shpmap$num,0), 
+                            "<br><strong>Casos x 100000 hab </strong>",
+                            round(shpmap$num_phab,1))
+
+leaflet(data=shpmap) %>%
+  addTiles() %>% 
+  #setView(lng=-1.5, lat=39.85, zoom = 06) %>% 
+  addPolygons(fillColor = ~pal_casos(num_phab),
+              stroke = TRUE, color="grey",weight = 1, fillOpacity =0.8, popup = popup_dat) %>% 
+  addLegend(position="bottomright", title="Casos Confirmados <br> x 100000 hab", pal=pal_casos,values = shpmap$num_phab)
+
+```
+
+
+
+### Evolución casos
+
+```{r}
+data_ccaa <- data_ccaa %>% left_join(pob_ccaa %>% select(cod_ine,pob), by="cod_ine") %>% mutate(num_phab = 1e5*num/pob)
+
+ggplot(data_ccaa %>% filter(tipo=="confirmados")) + geom_line(aes(Date, num_phab)) + facet_wrap(~CCAA)
+```
+
+
+```{r}
+sel_ccaa = c(tot_casos_ccaa$cod_ine[1:8],"02")
+sel_ccaa <- sel_ccaa[sel_ccaa!="00"]
+
+data_casos_ccaa = data_ccaa %>% filter(Date>= "2020-03-01", tipo=="confirmados", (cod_ine %in% sel_ccaa))
+tot_casos_sel <- tot_casos_ccaa %>% filter(cod_ine %in% sel_ccaa)
+
+getPalette = colorRampPalette(RColorBrewer::brewer.pal(9, "Set1"))
+
+# Hacer Gráfico dinámico - 
+
+p <- ggplot(data_casos_ccaa) + geom_point(aes(Date,num_phab, color=CCAA)) + 
+  geom_line(aes(Date,num_phab , color=CCAA), size=0.25,alpha=0.7) +
+  ggrepel::geom_text_repel(aes(Date+3,num_phab,label=CCAA, color=CCAA), size=3, data=tot_casos_sel, segment.alpha = 0,min.segment.length = 0.5) +
+  #scale_color_manual(values=getPalette(8)) +
+  scale_color_brewer(palette = "Set1") +
+  theme(legend.position = "none") #
+#plotly::ggplotly(p,dynamicTicks=TRUE)
+p
+
+
+
+p <- ggplot(data_casos_ccaa) + geom_point(aes(Date,num_phab, color=CCAA)) + 
+  geom_line(aes(Date,num_phab, color=CCAA), size=0.25,alpha=0.7) + 
+  ggrepel::geom_text_repel(aes(Date+3,num_phab,label=CCAA, color=CCAA), size=3, data=tot_casos_sel, segment.alpha = 0,min.segment.length = 0.5) +
+  scale_y_log10() + theme(legend.position = "none") +
+  scale_color_brewer(palette = "Set1") +
+  theme(legend.position = "none") +
+  coord_cartesian(ylim=c(1,300))
+  #scale_color_manual(values=getPalette(8))#
+#plotly::ggplotly(p,dynamicTicks=TRUE)
+p
+```
+
+### Ajustes y tiempos de duplicación
+
+
+```{r}
+cut_fit_date ="2020-03-14"
+data_casos_ccaa <- data_casos_ccaa %>%  mutate(t=as.numeric(Date-min(Date)))
+
+exp_fits <- data_casos_ccaa %>% filter(Date>=cut_fit_date) %>% #filter(num>50) %>%  
+  nest(-CCAA) %>% group_by(CCAA) %>%  
+      mutate(exp_mod = purrr::map(data, ~lm(log(num_phab)~t, data= .))) 
+
+coefs<- exp_fits %>%
+      mutate(tidied = purrr::map(exp_mod,broom::tidy)) %>% 
+      unnest(tidied) %>% select(CCAA,term, estimate)
+
+dupl_times<- coefs %>% filter(term =="t") %>% 
+        mutate(dupl_t = log(2)/estimate)
+
+dupl_times
+
+```
+
+```{r}
+fitted_data = exp_fits %>% 
+  mutate(fitted=map(exp_mod,augment)) %>%  unnest(fitted) %>% mutate(fitted=exp(.fitted)) %>% 
+  select(CCAA,t, fitted) %>%  mutate(Date=min(data_casos_ccaa$Date) + t)
+
+
+ggplot(data_casos_ccaa) + geom_point(aes(Date,num_phab, color=CCAA)) + 
+      geom_line(aes(Date,fitted, color=CCAA), data=fitted_data) +
+      ggrepel::geom_text_repel(aes(Date+5,num_phab,label=CCAA, color=CCAA), 
+                               size=3, data=tot_casos_sel, segment.alpha = 0,min.segment.length = 0.5) +
+  theme(legend.position = "none") +
+  scale_color_brewer(palette = "Set1") +
+  theme(legend.position = "none") +
+  coord_cartesian(ylim=c(1,300))
+  
+
+ggplot(data_casos_ccaa) + geom_point(aes(Date,num_phab, color=CCAA)) + 
+      geom_line(aes(Date,fitted, color=CCAA), data=fitted_data) +
+      ggrepel::geom_text_repel(aes(Date+5,num_phab,label=CCAA, color=CCAA), 
+                               size=3, data=tot_casos_sel, segment.alpha = 0,min.segment.length = 0.5) +
+  scale_y_log10() + 
+  theme(legend.position = "none") +
+  scale_color_brewer(palette = "Set1") +
+  theme(legend.position = "none") +
+  coord_cartesian(ylim=c(1,300))
+
+```
+
+### Tasa duplicación dinámica
+
+```{r}
+fit_window=7 # days
+first_date = as.Date("2020-03-10")
+
+fit_dates <- unique(data_casos_ccaa$Date[data_casos_ccaa$Date>=first_date])
+
+din_dupl_ccaa <- data.frame(fdate= fit_dates) %>% group_by(fdate) %>% do({
+    fd = .$fdate
+    df <- data_casos_ccaa %>%filter(Date<=fd, Date>fd-fit_window, num>0)
+    res <- df %>% nest(-CCAA) %>% group_by(CCAA) %>%  
+      mutate(exp_mod = purrr::map(data, ~lm(log(num)~t, data= .))) %>%
+      mutate(tidied = purrr::map(exp_mod,broom::tidy)) %>% 
+      unnest(tidied) %>% select(CCAA,term, estimate, std.error) %>% filter(term=="t") %>% 
+        mutate(dupl_t = log(2)/estimate)
+})
+
+ggplot(din_dupl_ccaa) + geom_point(aes(fdate,dupl_t, color=CCAA)) +
+  geom_smooth(aes(fdate,dupl_t, color=CCAA), se=FALSE, size=0.5, alpha=0.2, span=0.5) +
+  ggrepel::geom_text_repel(aes(fdate+2,dupl_t,label=CCAA, color=CCAA), 
+                           size=3, data=din_dupl_ccaa %>% ungroup %>% filter(fdate==max(fdate)) , 
+                           segment.alpha = 0,min.segment.length = 0.5) +
+  theme(legend.position="none") +
+  scale_color_brewer(palette="Set1") +
+  labs(y="Tiempo de duplicación de casos (dias)", title="Tiempos de duplicacion en ventana movil de una semana antes de la fecha")
+
+```
+
+##  Fallecidos
+
+```{r}
+tot_muertes_ccaa <- data_ccaa %>% group_by(CCAA) %>% filter(tipo=="muertes", Date==max(Date), !(CCAA %in% c("Ceuta","Melilla"))) 
+   
+# cases per 100000 hab
+tot_muertes_ccaa <- tot_muertes_ccaa %>% mutate(num_phab = 1e5*num/pob) %>% arrange(-num_phab)
+
+tot_muertes_ccaa
+```
+
+### Mapa 
+
+```{r}
+
+shpmap <- merge(shp_ccaa,tot_muertes_ccaa, by=c("cod_ine")) 
+
+pal_muertes <- colorNumeric("YlOrRd",shpmap$num_phab,
+                        na.color = "transparent")
+
+
+popup_dat <- paste0("<strong>CCAA: </strong>", 
+                            shpmap$CCAA,
+                            "<br><strong>Fallecidos: </strong>", 
+                            round(shpmap$num,0), 
+                            "<br><strong>Fallecidos x 100000 hab </strong>",
+                            round(shpmap$num_phab,1))
+
+leaflet(data=shpmap) %>%
+  addTiles() %>% 
+  #setView(lng=-1.5, lat=39.85, zoom = 06) %>% 
+  addPolygons(fillColor = ~pal_muertes(num_phab),
+              stroke = TRUE, color="grey",weight = 1, fillOpacity =0.8, popup = popup_dat) %>% 
+  addLegend(position="bottomright", title="Casos Confirmados <br> x 100000 hab", pal=pal_muertes,values = shpmap$num_phab)
+
+```
+
+
+
+### Evolución fallecidos
+
+```{r}
+ggplot(data_ccaa %>% filter(tipo=="muertes")) + geom_line(aes(Date, num_phab)) + facet_wrap(~CCAA)
+```
+
+
+```{r}
+#sel_ccaa = c(tot_casos_ccaa$cod_ine[1:8],"02")
+#sel_ccaa <- sel_ccaa[sel_ccaa!="00"]
+
+data_muertes_ccaa = data_ccaa %>% filter(Date>= "2020-03-01", tipo=="muertes", (cod_ine %in% sel_ccaa))
+tot_muertes_sel <- tot_muertes_ccaa %>% filter(cod_ine %in% sel_ccaa)
+
+
+# Hacer Gráfico dinámico - 
+
+p <- ggplot(data_muertes_ccaa) + geom_point(aes(Date,num_phab, color=CCAA)) + 
+  geom_line(aes(Date,num_phab , color=CCAA), size=0.25,alpha=0.7) +
+  ggrepel::geom_text_repel(aes(Date+3,num_phab,label=CCAA, color=CCAA), size=3, data=tot_muertes_sel, segment.alpha = 0,min.segment.length = 0.5) +
+  #scale_color_manual(values=getPalette(8)) +
+  scale_color_brewer(palette = "Set1") +
+  theme(legend.position = "none") #
+#plotly::ggplotly(p,dynamicTicks=TRUE)
+p
+
+
+
+p <- ggplot(data_muertes_ccaa) + geom_point(aes(Date,num_phab, color=CCAA)) + 
+  geom_line(aes(Date,num_phab, color=CCAA), size=0.25,alpha=0.7) + 
+  ggrepel::geom_text_repel(aes(Date+3,num_phab,label=CCAA, color=CCAA), size=3, data=tot_muertes_sel, segment.alpha = 0,min.segment.length = 0.5) +
+  scale_y_log10() + theme(legend.position = "none") +
+  scale_color_brewer(palette = "Set1") +
+  theme(legend.position = "none") +
+  coord_cartesian(ylim=c(1,30))
+  #scale_color_manual(values=getPalette(8))#
+#plotly::ggplotly(p,dynamicTicks=TRUE)
+p
+```
+
+### Ajustes y tiempos de duplicación
+
+
+```{r}
+cut_fit_date ="2020-03-14"
+data_muertes_ccaa <- data_muertes_ccaa %>%  mutate(t=as.numeric(Date-min(Date)))
+
+exp_fits_muertes <- data_muertes_ccaa %>% filter(Date>=cut_fit_date, num>0) %>% #filter(num>50) %>%  
+  nest(-CCAA) %>% group_by(CCAA) %>%  
+      mutate(exp_mod = purrr::map(data, ~lm(log(num_phab)~t, data= .))) 
+
+coefs_muertes<- exp_fits_muertes %>%
+      mutate(tidied = purrr::map(exp_mod,broom::tidy)) %>% 
+      unnest(tidied) %>% select(CCAA,term, estimate)
+
+dupl_times_muertes<- coefs_muertes %>% filter(term =="t") %>% 
+        mutate(dupl_t = log(2)/estimate)
+
+dupl_times_muertes
+
+```
+
+```{r}
+fitted_data_muertes = exp_fits_muertes %>% 
+  mutate(fitted=map(exp_mod,augment)) %>%  unnest(fitted) %>% mutate(fitted=exp(.fitted)) %>% 
+  select(CCAA,t, fitted) %>%  mutate(Date=min(data_muertes_ccaa$Date) + t)
+
+
+ggplot(data_muertes_ccaa) + geom_point(aes(Date,num_phab, color=CCAA)) + 
+      geom_line(aes(Date,fitted, color=CCAA), data=fitted_data_muertes) +
+      ggrepel::geom_text_repel(aes(Date+5,num_phab,label=CCAA, color=CCAA), 
+                               size=3, data=tot_muertes_sel, segment.alpha = 0,min.segment.length = 0.5) +
+  theme(legend.position = "none") +
+  scale_color_brewer(palette = "Set1") +
+  theme(legend.position = "none") +
+  coord_cartesian(ylim=c(0,20))
+  
+
+ggplot(data_muertes_ccaa) + geom_point(aes(Date,num_phab, color=CCAA)) + 
+      geom_line(aes(Date,fitted, color=CCAA), data=fitted_data_muertes) +
+      ggrepel::geom_text_repel(aes(Date+5,num_phab,label=CCAA, color=CCAA), 
+                               size=3, data=tot_muertes_sel, segment.alpha = 0,min.segment.length = 0.5) +
+  scale_y_log10() + labs(y="Fallecidos por 100000 hab") +
+  theme(legend.position = "none") +
+  scale_color_brewer(palette = "Set1") +
+  theme(legend.position = "none") +
+  coord_cartesian(ylim=c(0.1,30))
+
+```
+
+### Tasa duplicación dinámica
+
+```{r}
+fit_window=7 # days
+first_date = as.Date("2020-03-10")
+
+fit_dates <- unique(data_muertes_ccaa$Date[data_muertes_ccaa$Date>=first_date])
+
+din_dupl_muertes_ccaa <- data.frame(fdate= fit_dates) %>% group_by(fdate) %>% do({
+    fd = .$fdate
+    df <- data_muertes_ccaa %>%filter(Date<=fd, Date>fd-fit_window, num>0)
+    res <- df %>% nest(-CCAA) %>% group_by(CCAA) %>%  
+      mutate(exp_mod = purrr::map(data, ~lm(log(num)~t, data= .))) %>%
+      mutate(tidied = purrr::map(exp_mod,broom::tidy)) %>% 
+      unnest(tidied) %>% select(CCAA,term, estimate, std.error) %>% filter(term=="t") %>% 
+        mutate(dupl_t = log(2)/estimate)
+})
+
+ggplot(din_dupl_muertes_ccaa) + geom_point(aes(fdate,dupl_t, color=CCAA)) +
+  geom_smooth(aes(fdate,dupl_t, color=CCAA), se=FALSE, size=0.5, alpha=0.2, span=0.5) +
+  ggrepel::geom_text_repel(aes(fdate+2,dupl_t,label=CCAA, color=CCAA), 
+                           size=3, data=din_dupl_muertes_ccaa %>% ungroup %>% filter(fdate==max(fdate)) , 
+                           segment.alpha = 0,min.segment.length = 0.5) +
+  theme(legend.position="none") +
+  scale_color_brewer(palette="Set1") +
+  labs(y="Tiempo de duplicación de casos (dias)", title="Tiempos de duplicacion en ventana movil de una semana antes de la fecha")
+
+```
+
+
+
+# Differential equations
+
+https://staff.math.su.se/hoehle/blog/2020/03/16/flatteningthecurve.html
+
+https://timchurches.github.io/blog/posts/2020-03-10-modelling-the-effects-of-public-health-interventions-on-covid-19-transmission-part-1/
+
+https://blog.ephorie.de/epidemiology-how-contagious-is-novel-coronavirus-2019-ncov
+
