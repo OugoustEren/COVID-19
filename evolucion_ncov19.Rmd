@@ -1,5 +1,6 @@
 ---
-title: "Análisis Evolución COVID-19"
+title: "Evolución de  COVID-19"
+subtitle: "España y el Mundo"
 output:
   html_document:
     keep_md: true
@@ -21,22 +22,28 @@ library(broom)
 library(plotly)
 library(rgdal)
 library(leaflet)
+library(plotly)
+library(DT)
 ```
 
 
-Datos Internacionales
+# Introducción 
 
-https://github.com/CSSEGISandData/COVID-19
+Las fuentes de los datos utilizadas en este estudio son las siguientes: 
 
-Datos España
+- Datos Internacionales: <https://github.com/CSSEGISandData/COVID-19> del repositorio de la John Hopkins University 
 
-https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master
+- Datos España: <https://github.com/datadista/datasets/tree/master/COVID%2019> del repositorio GitHub de **Datadista** 
 
-Datadista: 
+Otros enlaces a dashboards o análisis interesantes son:
 
-https://github.com/datadista/datasets/tree/master/COVID%2019
-https://github.com/datadista/datasets/blob/master/COVID%2019/ccaa_covid19_casos.csv
+- [Dashboard John Hopkins](https://www.arcgis.com/apps/opsdashboard/index.html#/bda7594740fd40299423467b48e9ecf6)
 
+- [Seguimiento El País](https://elpais.com/sociedad/2020/03/16/actualidad/1584360628_538486.html)
+
+- [Ministerio de Sanidad España](https://covid19.isciii.es/)
+
+- [Datos Italia por Provincias](https://github.com/pcm-dpc/COVID-19)
 
 
 ```{r}
@@ -59,100 +66,130 @@ data <- bind_rows(
 )
 
 data <- data %>% mutate(Date=as.Date(Date,format="%m/%d/%y"))
+# Delete data from 2020-03-12. Same data as previous day
+data <- data %>% filter(Date!="2020-03-12")
 data_w <- data %>% pivot_wider(id_cols = c("Country/Region","Province/State","Date"), names_from = "tipo", values_from = "num")
 data_w <- data_w %>% mutate(activos = confirmados - recuperados -muertes)
 ```
 
-# Totales por País y Provincia
 
 ```{r}
-(last_data <- data %>% group_by(tipo,`Province/State`,`Country/Region`) %>% filter(Date==max(Date)) %>% arrange(tipo,desc(num)) %>% select(-Lat,-Long))
-
+last_data <- data %>% group_by(tipo,`Province/State`,`Country/Region`) %>% filter(Date==max(Date))  
+last_data_w <- data_w %>% group_by(`Province/State`,`Country/Region`) %>% filter(Date==max(Date))  
 ```
 
 
 ## Total por país
 
 ```{r}
-(tot_country <- last_data %>% group_by(tipo,`Country/Region`) %>% summarise(num=sum(num)) %>% arrange(tipo,desc(num)))
+tot_country <-last_data_w %>% group_by(`Country/Region`) %>% summarise_at(vars(confirmados:recuperados), sum) %>% arrange(desc(confirmados))
+
+# Calculamos tasas de mortalidad y recuperación 
+
+tot_country<- tot_country %>% mutate(mort_rate = 100* muertes/confirmados, rec_rate=100* recuperados/confirmados)
+
+#tot_country
+datatable(tot_country) %>% formatRound(c("mort_rate", "rec_rate"),1)
 ```
 
 
-## Tasas de Mortalidad
+# Evolución General
 
-```{r}
-tasas_tot <- tot_country %>% spread(key=tipo,value=num) 
-#tasas_tot <- tasas_tot %>% mutate_if(is.integer,as.numeric) 
-tasas_tot <- tasas_tot %>%  mutate(mort_rate = muertes/confirmados, rec_rate=recuperados/confirmados)
-tasas_tot <- tasas_tot %>% arrange(desc(confirmados))
-tasas_tot
-```
-
-
-Agregate by country and date
 
 ```{r}
 ev_ctry <- data %>% group_by(`Country/Region`,Date, tipo) %>% summarise(num=sum(num))
 ev_ctry_w <- data_w %>% group_by(`Country/Region`,Date) %>% summarise_at(.vars=vars(confirmados:activos),sum)
 ```
 
+## Casos Confirmados
 
-Casos confirmados
+Escala lineal 
 
 ```{r}
-sel.ctry = tasas_tot$`Country/Region`[1:10]
+sel.ctry = tot_country$`Country/Region`[1:12]
 
 ggplot(ev_ctry %>% filter(`Country/Region` %in% sel.ctry, tipo=="confirmados")) + geom_line(aes(Date,num, group=1)) +
-  facet_wrap(~`Country/Region`, scales="free") + scale_y_log10()
+  facet_wrap(~`Country/Region`, scales="free_y") + labs(y="Confirmados") + theme(axis.text.x = element_text(angle=45, hjust = 1))
+  
+#scale_x_date(guide = guide_axis(n.dodge = 2)) 
 ```
-Casos activos
+
+Escala logarítmica 
 
 ```{r}
-sel.ctry = tasas_tot$`Country/Region`[1:10]
 
-ggplot(ev_ctry_w %>% filter(`Country/Region` %in% sel.ctry)) + geom_line(aes(Date,activos, group=1)) +
-  facet_wrap(~`Country/Region`, scales="free") 
+ggplot(ev_ctry %>% filter(`Country/Region` %in% sel.ctry, tipo=="confirmados")) + geom_line(aes(Date,num, group=1)) +
+  facet_wrap(~`Country/Region`, scales="free_y") + labs(y="Confirmados") + theme(axis.text.x = element_text(angle=45, hjust = 1))+ 
+  scale_y_log10()
 
-ggplot(ev_ctry_w %>% filter(`Country/Region` %in% sel.ctry)) + geom_line(aes(Date,activos, group=1)) +
-  facet_wrap(~`Country/Region`, scales="free") + scale_y_log10()
 ```
 
-# Evolucion casos
+
+
+## Casos activos (Confirmados .- Recuperados)
+
+```{r}
+ggplot(ev_ctry_w %>% filter(`Country/Region` %in% sel.ctry)) + geom_line(aes(Date,activos, group=1)) +
+  facet_wrap(~`Country/Region`, scales="free_y") 
+```
+
+Log 
+
+```{r}
+ggplot(ev_ctry_w %>% filter(`Country/Region` %in% sel.ctry)) + geom_line(aes(Date,activos, group=1)) +
+  facet_wrap(~`Country/Region`, scales="free_y") + scale_y_log10()
+
+```
+
+## Fallecidos
+
+```{r}
+ggplot(ev_ctry_w %>% filter(`Country/Region` %in% sel.ctry)) + geom_line(aes(Date,muertes, group=1)) +
+  facet_wrap(~`Country/Region`, scales="free_y") + scale_y_log10()
+
+```
+
+# Modelado de la Evolución en Paises Seleccionados
+
+
+## Casos
 
 ```{r}
 sel_ctrys <- c("Spain", "Italy", "France", "US", "Germany", "United Kingdom")
-data_casos = ev_ctry %>% filter(`Country/Region` %in% sel_ctrys, Date>= "2020-03-01", tipo=="confirmados")
+date_ini = "2020-03-01"
 
-data_casos$num[data_casos$tipo=="confirmados" & data_casos$Date==as.Date("2020-03-12") & data_casos$`Country/Region`=="Spain"] = 3400
-data_casos$num[data_casos$tipo=="confirmados" & data_casos$Date==as.Date("2020-03-12") & data_casos$`Country/Region`=="Italy"] = NA
-data_casos$num[data_casos$tipo=="confirmados" & data_casos$Date==as.Date("2020-03-12") & data_casos$`Country/Region`=="France"] = NA
-
-# data <- bind_rows(data, tibble(Date=as.Date("2020-03-13"), `Country/Region`="Spain", tipo="confirmados", num=4209),
-#                   tibble(Date=as.Date("2020-03-13"), `Country/Region`="Italy", tipo="confirmados", num=15113),
-#                   )
-
-
-# Hacer Gráfico dinámico - 
+data_casos = ev_ctry %>% filter(`Country/Region` %in% sel_ctrys, Date >= date_ini , tipo=="confirmados")
 
 p <- ggplot(data_casos) + geom_point(aes(Date,num, color=`Country/Region`)) + 
   geom_line(aes(Date,num, color=`Country/Region`), size=0.25,alpha=0.2) + 
   scale_color_brewer(palette="Set1")#
-#plotly::ggplotly(p,dynamicTicks=TRUE)
-p
 
-p <- ggplot(data_casos) + geom_point(aes(Date,num, color=`Country/Region`)) + 
-  geom_line(aes(Date,num, color=`Country/Region`), size=0.25,alpha=0.2) + 
-  scale_y_log10() +
-  scale_color_brewer(palette="Set1")#
-#plotly::ggplotly(p,dynamicTicks=TRUE)
-p
+ggplotly(p,dynamicTicks=TRUE)
+
 ```
 
-
-Exponential fits
+Escala logarítmica
 
 ```{r}
-cut_fit_date = as.Date("2020-03-13")
+p <- ggplot(data_casos %>% filter(num>1)) + geom_point(aes(Date,num, color=`Country/Region`)) + 
+  geom_line(aes(Date,num, color=`Country/Region`), size=0.25,alpha=0.2) + 
+  scale_y_log10() +
+  scale_color_brewer(palette="Set1")
+#ggplotly(p)
+
+
+fig <- plot_ly(data = data_casos %>% ungroup(), x = ~Date, y = ~num, 
+               group = ~`Country/Region`,  color= ~`Country/Region`, mode='lines+markers',  type="scatter")
+fig <- layout(fig,  yaxis = list(type = "log"))
+fig
+
+
+```
+
+### Ajustes Exponenciales
+
+```{r}
+cut_fit_date = as.Date("2020-03-15")
 
 data_casos <- data_casos %>% group_by(`Country/Region`) %>% mutate(t=as.numeric(Date-min(Date)))
 
@@ -173,14 +210,14 @@ data_casos_nest <- data_casos_nest %>% mutate(tidied_full = purrr::map(exp_mod_f
 ```
 
 
-Full fit
+Fit periodo completo
 
 ```{r}
 (coefs_full <- data_casos_nest %>% unnest(tidied_full) %>% select(`Country/Region`,term, estimate, std.error) %>% filter(term=="t") %>% 
   mutate(dupl_t = log(2)/estimate))
 ```
 
-Fit after `r as.character(cut_fit_date)`
+Fit después de  `r as.character(cut_fit_date)`
 
 
 ```{r}
@@ -190,7 +227,7 @@ Fit after `r as.character(cut_fit_date)`
 ```
 
 
-Fit after `r as.character(cut_fit_date)`
+Fit antes de   `r as.character(cut_fit_date)`
 
 
 ```{r}
@@ -199,7 +236,7 @@ Fit after `r as.character(cut_fit_date)`
 
 ```
 
-Plot fits and future projections
+Plot fits antes/despúes `r cut_fit_date` y tiempos de duplicación 
 
 ```{r, fig.width=10, fig.height=7}
 
@@ -252,7 +289,7 @@ ggplot(data_casos) +
   geom_line(aes(Date,fitted, color=`Country/Region`), data=tmp_a) +
   geom_line(aes(Date,fitted, color=`Country/Region`), data=tmp_full, linetype=3, alpha=1) +
   geom_line(aes(Date,pred, color=Country), linetype = 2, data=future) +
-  geom_vline(aes(xintercept = cut_fit_date), col = "white", size=3) +
+  geom_vline(aes(xintercept = cut_fit_date), col = "white", size=3, alpha=0.7) +
   ggrepel::geom_label_repel(aes(Date + 3, fitted*2, label=round(dupl_t,1), 
                             color=`Country/Region`), fill="grey90", size=3 , alpha=1, data=dupl_index_info_a, segment.alpha = 0) +
   ggrepel::geom_label_repel(aes(Date + 1, fitted*1.4, label=round(dupl_t,1), color=`Country/Region`), 
@@ -289,36 +326,36 @@ ggplot(din_dupl) + geom_point(aes(fdate,dupl_t, color=`Country/Region`)) +
 
 
 
-# Evolución muertes
+## Fallecidos
 
 
 ```{r}
-sel_ctrys <- c("Spain", "Italy", "France", "US", "Germany", "United Kingdom")
+date_ini <- "2020-03-01"
 
-data_muertes = ev_ctry %>% filter(`Country/Region` %in% sel_ctrys, Date>= "2020-03-01", tipo=="muertes")
-
-data_muertes$num[data_muertes$tipo=="confirmados" & data_muertes$Date==as.Date("2020-03-12") & data_muertes$`Country/Region`=="Spain"] = 3400
-data_muertes$num[data_muertes$tipo=="confirmados" & data_muertes$Date==as.Date("2020-03-12") & data_muertes$`Country/Region`=="Italy"] = NA
-data_muertes$num[data_muertes$tipo=="confirmados" & data_muertes$Date==as.Date("2020-03-12") & data_muertes$`Country/Region`=="France"] = NA
-
-# data <- bind_rows(data, tibble(Date=as.Date("2020-03-13"), `Country/Region`="Spain", tipo="confirmados", num=4209),
-#                   tibble(Date=as.Date("2020-03-13"), `Country/Region`="Italy", tipo="confirmados", num=15113),
-#                   )
+data_muertes = ev_ctry %>% filter(`Country/Region` %in% sel_ctrys, Date>=date_ini , tipo == "muertes")
 
 
-# Convert plot in dynamic
-
-
-p <- ggplot(data_muertes) + geom_point(aes(Date,num, color=`Country/Region`)) + scale_y_log10() +
+p <- ggplot(data_muertes) + geom_point(aes(Date,num, color=`Country/Region`))  +
+  geom_line(aes(Date,num, color=`Country/Region`)) +
   scale_color_brewer(palette="Set1")#
-#plotly::ggplotly(p,dynamicTicks=TRUE)
-p
+plotly::ggplotly(p,dynamicTicks=TRUE)
+
+
+
+```
+
+```{r}
+fig <- plot_ly(data = data_muertes %>% ungroup(), x = ~Date, y = ~num, 
+               group = ~`Country/Region`,  color= ~`Country/Region`, mode='lines+markers',  type="scatter")
+fig <- layout(fig,  yaxis = list(type = "log"))
+fig
 ```
 
 
+### Ajustes Exponenciales
 
 ```{r}
-cut_fit_date = as.Date("2020-03-13")
+cut_fit_date = as.Date("2020-03-15")
 
 data_muertes <- data_muertes %>% group_by(`Country/Region`) %>% mutate(t=as.numeric(Date-min(Date))) %>% filter(num>0)
 
@@ -339,14 +376,14 @@ data_muertes_nest <- data_muertes_nest %>% mutate(tidied_full = purrr::map(exp_m
 ```
 
 
-Full fit
+Fit periodo completo
 
 ```{r}
 (coefsm_full <- data_muertes_nest %>% unnest(tidied_full) %>% select(`Country/Region`,term, estimate, std.error) %>% filter(term=="t") %>% 
   mutate(dupl_t = log(2)/estimate))
 ```
 
-Fit after `r as.character(cut_fit_date)`
+Ajuste después de  `r as.character(cut_fit_date)`
 
 
 ```{r}
@@ -356,7 +393,7 @@ Fit after `r as.character(cut_fit_date)`
 ```
 
 
-Fit after `r as.character(cut_fit_date)`
+Ajuste antes de `r as.character(cut_fit_date)`
 
 
 ```{r}
@@ -418,15 +455,15 @@ ggplot(data_muertes) +
   geom_line(aes(Date,fitted, color=`Country/Region`), data=tmp_a) +
   geom_line(aes(Date,fitted, color=`Country/Region`), data=tmp_full, linetype=3, alpha=1) +
   geom_line(aes(Date,pred, color=Country), linetype = 2, data=future) +
-  geom_vline(aes(xintercept = cut_fit_date), col = "white", size=3) +
+  geom_vline(aes(xintercept = cut_fit_date), col = "white", size=3, alpha=0.5) +
   ggrepel::geom_label_repel(aes(Date + 3, fitted*2, label=round(dupl_t,1), 
                             color=`Country/Region`), fill="grey90", size=3 , alpha=1, data=dupl_index_info_a, segment.alpha = 0) +
   ggrepel::geom_label_repel(aes(Date + 1, fitted*1.4, label=round(dupl_t,1), color=`Country/Region`), 
                             size=3,  fill="grey90", alpha=0.8, data=dupl_index_info_b, segment.alpha = 0) +
   geom_text(aes(x=cut_fit_date, y = 1e4, label=paste("Fits after and before" ,cut_fit_date,"\n Labels: duplication times in days")), size=3) +
-  scale_y_log10() + labs(x="",y="Deaths + Projection (log10)") +
+  scale_y_log10() + labs(x="",y="Fallecidos  + Proyección (log10)") +
   scale_color_brewer(palette="Set1") +  
-  coord_cartesian(ylim=c(1, 5e4))
+  coord_cartesian(ylim=c(1, 2e4))
 
 
 ```
@@ -459,9 +496,9 @@ ggplot(din_dupl_muertes) + geom_point(aes(fdate,dupl_t, color=`Country/Region`))
 ```
 
 
-# Visualización desde el instante con 100 casos
+## Visualización desde el instante con 100 casos
 
-## Confirmados
+### Casos
 
 ```{r}
 sel_ctrys <- c("Spain", "Italy", "France", "US", "Germany", "United Kingdom")
@@ -473,17 +510,6 @@ data_casos_icom <-  ev_ctry %>% filter(`Country/Region` %in% sel_ctrys, num>= ni
 data_casos_icom <- data_casos_icom %>% group_by(`Country/Region`) %>% mutate(ini_Date = min(Date), t=as.numeric(Date-min(Date)))
 
 
-
-data_casos_icom$num[data_casos_icom$tipo=="confirmados" & data_casos_icom$Date==as.Date("2020-03-12") & data_casos_icom$`Country/Region`=="Spain"] = NA
-data_casos_icom$num[data_casos_icom$tipo=="confirmados" & data_casos_icom$Date==as.Date("2020-03-12") & data_casos_icom$`Country/Region`=="Italy"] = NA
-data_casos_icom$num[data_casos_icom$tipo=="confirmados" & data_casos_icom$Date==as.Date("2020-03-12") & data_casos_icom$`Country/Region`=="France"] = NA
-# 
-# data <- bind_rows(data, tibble(Date=as.Date("2020-03-13"), `Country/Region`="Spain", tipo="confirmados", num=4209),
-#                   tibble(Date=as.Date("2020-03-13"), `Country/Region`="Italy", tipo="confirmados", num=15113),
-#                   )
-
-
-
 #Rescale to begin exactly from nini
 #data_casos_icom <- data_casos_icom %>% group_by(`Country/Region`) %>% mutate(num=nini*num/num[1]) %>% filter(t<30)
 
@@ -492,8 +518,9 @@ ggplot(data_casos_icom %>% na.omit()) + geom_point(aes(t,num, color=`Country/Reg
   geom_line(aes(t,num, color=`Country/Region`), size=0.1, alpha=0.5) + scale_y_log10() + 
   labs(x="dias desde alcanzar 100 infectados", y="Casos Confimados") + scale_color_brewer(palette = "Set1")
 
-ggplot(data_casos_icom %>% na.omit()) + geom_point(aes(t,num, color=`Country/Region`)) + 
-  geom_line(aes(t,num, color=`Country/Region`), size=0.1, alpha=0.5)  + labs(x="dias desde alcanzar 100 infectados", y="Casos Confimados") + scale_color_brewer(palette = "Set1")
+# ggplot(data_casos_icom %>% na.omit()) + geom_point(aes(t,num, color=`Country/Region`)) +
+#   geom_line(aes(t,num, color=`Country/Region`), size=0.1, alpha=0.5)  + labs(x="dias desde alcanzar 100 infectados", y="Casos Confimados") +   
+#   scale_color_brewer(palette = "Set1")
 
 ```
 
@@ -502,44 +529,28 @@ Incluyendo China
 
 
 ```{r}
-sel_ctrys <- c("Spain", "Italy", "France", "US", "Germany", "United Kingdom", "China")
+sel_ctrys2 <- c("Spain", "Italy", "France", "US", "Germany", "United Kingdom", "China")
 #sel_ctrys = tasas_tot$`Country/Region`[1:6]
 
 nini=500
 
-data_casos_icom <-  ev_ctry %>% filter(`Country/Region` %in% sel_ctrys, num>= nini, tipo=="confirmados")
-data_casos_icom <- data_casos_icom %>% group_by(`Country/Region`) %>% mutate(ini_Date = min(Date), t=as.numeric(Date-min(Date)))
-
-
-
-data_casos_icom$num[data_casos_icom$tipo=="confirmados" & data_casos_icom$Date==as.Date("2020-03-12") & data_casos_icom$`Country/Region`=="Spain"] = NA
-data_casos_icom$num[data_casos_icom$tipo=="confirmados" & data_casos_icom$Date==as.Date("2020-03-12") & data_casos_icom$`Country/Region`=="Italy"] = NA
-data_casos_icom$num[data_casos_icom$tipo=="confirmados" & data_casos_icom$Date==as.Date("2020-03-12") & data_casos_icom$`Country/Region`=="France"] = NA
-# 
-# data <- bind_rows(data, tibble(Date=as.Date("2020-03-13"), `Country/Region`="Spain", tipo="confirmados", num=4209),
-#                   tibble(Date=as.Date("2020-03-13"), `Country/Region`="Italy", tipo="confirmados", num=15113),
-#                   )
-
-
+data_casos_icom2 <-  ev_ctry %>% filter(`Country/Region` %in% sel_ctrys2, num>= nini, tipo=="confirmados")
+data_casos_icom2 <- data_casos_icom2 %>% group_by(`Country/Region`) %>% mutate(ini_Date = min(Date), t=as.numeric(Date-min(Date)))
 
 #Rescale to begin exactly from nini
 #data_casos_icom <- data_casos_icom %>% group_by(`Country/Region`) %>% mutate(num=nini*num/num[1]) %>% filter(t<30)
 
 
-ggplot(data_casos_icom %>% na.omit()) + geom_point(aes(t,num, color=`Country/Region`)) + 
+ggplot(data_casos_icom2 %>% na.omit()) + geom_point(aes(t,num, color=`Country/Region`)) + 
   geom_line(aes(t,num, color=`Country/Region`), size=0.1, alpha=0.5) + scale_y_log10() + 
   coord_cartesian(xlim=c(0,30)) +
   labs(x="Dias desde alcanzar 100 infectados", y="Casos Confimados") + scale_color_brewer(palette = "Set1")
 
-ggplot(data_casos_icom %>% na.omit()) + geom_point(aes(t,num, color=`Country/Region`)) + 
-  geom_line(aes(t,num, color=`Country/Region`), size=0.1, alpha=0.5)  + labs(x="Dias desde alcanzar 100 infectados", y="Casos Confimados") +
-  coord_cartesian(xlim=c(0,30)) +
-  scale_color_brewer(palette = "Set1")
 
 ```
 
 
-## Fallecidos 
+### Fallecidos 
 
 
 ```{r}
@@ -551,21 +562,12 @@ sel_ctrys2 <- c("Spain", "Italy", "France", "US", "Germany", "United Kingdom", "
 data_deaths_icom2 <-  ev_ctry %>% filter(`Country/Region` %in% sel_ctrys2, tipo=="muertes")
 
 # Select the first date selected for casos
-first_date_casos <- data_casos_icom%>% group_by(`Country/Region`) %>%  filter(t==min(t))
+first_date_casos <- data_casos_icom2 %>% group_by(`Country/Region`) %>%  filter(t==min(t))
 
 data_deaths_icom2 <- data_deaths_icom2 %>% left_join(first_date_casos %>% select(`Country/Region`, Date), by= "Country/Region", suffix=c("",".ini"))
 data_deaths_icom2 <- data_deaths_icom2 %>% filter(Date>Date.ini)
 
 data_deaths_icom2 <- data_deaths_icom2 %>% group_by(`Country/Region`) %>% mutate(ini_Date = min(Date), t=as.numeric(Date-min(Date)))
-
-
-data_deaths_icom2$num[data_deaths_icom2$tipo=="confirmados" & data_deaths_icom2$Date==as.Date("2020-03-12") & data_deaths_icom2$`Country/Region`=="Spain"] = NA
-data_deaths_icom2$num[data_deaths_icom2$tipo=="confirmados" & data_deaths_icom2$Date==as.Date("2020-03-12") & data_deaths_icom2$`Country/Region`=="Italy"] = NA
-data_deaths_icom2$num[data_deaths_icom2$tipo=="confirmados" & data_deaths_icom2$Date==as.Date("2020-03-12") & data_deaths_icom2$`Country/Region`=="France"] = NA
-# 
-# data <- bind_rows(data, tibble(Date=as.Date("2020-03-13"), `Country/Region`="Spain", tipo="confirmados", num=4209),
-#                   tibble(Date=as.Date("2020-03-13"), `Country/Region`="Italy", tipo="confirmados", num=15113),
-#                   )
 
 
 
@@ -576,10 +578,6 @@ data_deaths_icom2$num[data_deaths_icom2$tipo=="confirmados" & data_deaths_icom2$
 ggplot(data_deaths_icom2 %>% na.omit()) + geom_point(aes(t,num, color=`Country/Region`)) + 
   geom_line(aes(t,num, color=`Country/Region`), size=0.1, alpha=0.5) + scale_y_log10() + 
   labs(x="dias desde alcanzar 100 infectados", y="Fallecidos") + scale_color_brewer(palette = "Set1") +
-  coord_cartesian(xlim=c(0,50))
-
-ggplot(data_deaths_icom2 %>% na.omit()) + geom_point(aes(t,num, color=`Country/Region`)) + 
-  geom_line(aes(t,num, color=`Country/Region`), size=0.1, alpha=0.5)  + labs(x="dias desde alcanzar 100 infectados", y="Fallecidos") + scale_color_brewer(palette = "Set1") +
   coord_cartesian(xlim=c(0,50))
 
 ```
@@ -654,7 +652,6 @@ tot_casos_ccaa
 ### Mapa 
 
 ```{r}
-library(leaflet)
 shpmap <- merge(shp_ccaa,tot_casos_ccaa, by=c("cod_ine")) 
 
 pal_casos <- colorNumeric("YlOrRd",shpmap$num_phab,
@@ -685,6 +682,7 @@ leaflet(data=shpmap) %>%
 data_ccaa <- data_ccaa %>% left_join(pob_ccaa %>% select(cod_ine,pob), by="cod_ine") %>% mutate(num_phab = 1e5*num/pob)
 
 ggplot(data_ccaa %>% filter(tipo=="confirmados")) + geom_line(aes(Date, num_phab)) + facet_wrap(~CCAA)
+
 ```
 
 
@@ -692,7 +690,7 @@ ggplot(data_ccaa %>% filter(tipo=="confirmados")) + geom_line(aes(Date, num_phab
 sel_ccaa = c(tot_casos_ccaa$cod_ine[1:8],"02")
 sel_ccaa <- sel_ccaa[sel_ccaa!="00"]
 
-data_casos_ccaa = data_ccaa %>% filter(Date>= "2020-03-01", tipo=="confirmados", (cod_ine %in% sel_ccaa))
+data_casos_ccaa = data_ccaa %>% filter(Date>= date_ini , tipo=="confirmados", (cod_ine %in% sel_ccaa))
 tot_casos_sel <- tot_casos_ccaa %>% filter(cod_ine %in% sel_ccaa)
 
 getPalette = colorRampPalette(RColorBrewer::brewer.pal(9, "Set1"))
@@ -851,7 +849,7 @@ ggplot(data_ccaa %>% filter(tipo=="muertes")) + geom_line(aes(Date, num_phab)) +
 #sel_ccaa = c(tot_casos_ccaa$cod_ine[1:8],"02")
 #sel_ccaa <- sel_ccaa[sel_ccaa!="00"]
 
-data_muertes_ccaa = data_ccaa %>% filter(Date>= "2020-03-01", tipo=="muertes", (cod_ine %in% sel_ccaa))
+data_muertes_ccaa = data_ccaa %>% filter(Date>=date_ini , tipo=="muertes", (cod_ine %in% sel_ccaa))
 tot_muertes_sel <- tot_muertes_ccaa %>% filter(cod_ine %in% sel_ccaa)
 
 
