@@ -1,6 +1,6 @@
 ---
-title: "Evolución de  COVID-19"
-subtitle: "España y el Mundo"
+title: "Evolución de la epidemia de COVID-19"
+subtitle: "<center> En España y el Mundo </center>"
 output:
   html_document:
     keep_md: true
@@ -79,7 +79,7 @@ last_data_w <- data_w %>% group_by(`Province/State`,`Country/Region`) %>% filter
 ```
 
 
-## Total por país
+## Totales por país
 
 ```{r}
 tot_country <-last_data_w %>% group_by(`Country/Region`) %>% summarise_at(vars(confirmados:recuperados), sum) %>% arrange(desc(confirmados))
@@ -300,7 +300,7 @@ ggplot(data_casos) +
 
 ```
 
-### Tasa duplicación dinámica
+### Tiempo duplicación dinámico
 
 ```{r}
 fit_window=7 # days
@@ -468,7 +468,7 @@ ggplot(data_muertes) +
 
 ```
 
-### Tasa duplicación dinámica
+### Tiempo duplicación dinámico
 
 ```{r}
 fit_window=7 # days
@@ -629,48 +629,55 @@ pob_ccaa$cod_ine[pob_ccaa$cod_ine=="Total"]="00"
 ```
 
 
-```{r}
+```{r, results='hide'}
 # shp file CCAA
 shp_ccaa <- rgdal::readOGR(dsn="ccaa_shp",layer = "comunidades-autonomas-espanolas", stringsAsFactors = FALSE, encoding = "UTF-8", use_iconv = TRUE)
 names(shp_ccaa)[1]="cod_ine"
 
 ```
 
+## Totales 
+
+```{r}
+tot_ccaa <- data_ccaa %>% group_by(cod_ine,CCAA, tipo) %>% filter(Date==max(Date), !(CCAA %in% c("Ceuta","Melilla"))) %>% 
+  summarise(Date=max(Date), num=sum(num)) 
+tot_ccaa <- tot_ccaa %>% pivot_wider(id_cols = c("cod_ine","CCAA","Date"), names_from = "tipo", values_from ="num") %>% arrange(-confirmados)
+tot_ccaa <- tot_ccaa %>% left_join(pob_ccaa %>% select(cod_ine,pob), by="cod_ine") %>% 
+  mutate(confirmados_phab = 1e5*confirmados/pob,muertes_phab=1e5*muertes/pob, mort_rate=100*muertes/confirmados, rec_rate=100*recuperados/confirmados)
+datatable(tot_ccaa %>% ungroup() %>% select(-cod_ine, -Date), rownames = FALSE)  %>% formatRound(c(7:10),1)
+```
+
 
 ##  Casos
 
-```{r}
-tot_casos_ccaa <- data_ccaa %>% group_by(CCAA) %>% filter(tipo=="confirmados", Date==max(Date), !(CCAA %in% c("Ceuta","Melilla"))) 
-   
-# cases per 100000 hab
-tot_casos_ccaa <- tot_casos_ccaa %>% left_join(pob_ccaa %>% select(cod_ine,pob), by="cod_ine") %>% mutate(num_phab = 1e5*num/pob) %>% 
-  arrange(-num_phab)
-
-tot_casos_ccaa
-```
 
 ### Mapa 
 
 ```{r}
-shpmap <- merge(shp_ccaa,tot_casos_ccaa, by=c("cod_ine")) 
+shpmap <- merge(shp_ccaa,tot_ccaa, by=c("cod_ine")) 
 
-pal_casos <- colorNumeric("YlOrRd",shpmap$num_phab,
+pal_casos <- colorNumeric("YlOrRd",shpmap$confirmados_phab,
                         na.color = "transparent")
 
 
 popup_dat <- paste0("<strong>CCAA: </strong>", 
                             shpmap$CCAA,
                             "<br><strong>Casos: </strong>", 
-                            round(shpmap$num,0), 
+                            round(shpmap$confirmados,0), 
                             "<br><strong>Casos x 100000 hab </strong>",
-                            round(shpmap$num_phab,1))
+                            round(shpmap$confirmados_phab,1),
+                            "<br><strong>Fallecidos: </strong>", 
+                            round(shpmap$muertes,0), 
+                            "<br><strong>Fallecidos x 100000 hab </strong>",
+                            round(shpmap$muertes_phab,1))
+
 
 leaflet(data=shpmap) %>%
   addTiles() %>% 
   #setView(lng=-1.5, lat=39.85, zoom = 06) %>% 
-  addPolygons(fillColor = ~pal_casos(num_phab),
+  addPolygons(fillColor = ~pal_casos(confirmados_phab),
               stroke = TRUE, color="grey",weight = 1, fillOpacity =0.8, popup = popup_dat) %>% 
-  addLegend(position="bottomright", title="Casos Confirmados <br> x 100000 hab", pal=pal_casos,values = shpmap$num_phab)
+  addLegend(position="bottomright", title="Casos Confirmados <br> x 100000 hab", pal=pal_casos,values = shpmap$confirmados_phab)
 
 ```
 
@@ -687,44 +694,49 @@ ggplot(data_ccaa %>% filter(tipo=="confirmados")) + geom_line(aes(Date, num_phab
 
 
 ```{r}
-sel_ccaa = c(tot_casos_ccaa$cod_ine[1:8],"02")
+sel_ccaa = c(tot_ccaa$cod_ine[1:8],"02")
 sel_ccaa <- sel_ccaa[sel_ccaa!="00"]
 
 data_casos_ccaa = data_ccaa %>% filter(Date>= date_ini , tipo=="confirmados", (cod_ine %in% sel_ccaa))
-tot_casos_sel <- tot_casos_ccaa %>% filter(cod_ine %in% sel_ccaa)
+tot_casos_sel <- tot_ccaa %>% filter(cod_ine %in% sel_ccaa)
 
-getPalette = colorRampPalette(RColorBrewer::brewer.pal(9, "Set1"))
+# If we consider more than 9 CCAA 
+# getPalette = colorRampPalette(RColorBrewer::brewer.pal(9, "Set1"))
 
-# Hacer Gráfico dinámico - 
 
 p <- ggplot(data_casos_ccaa) + geom_point(aes(Date,num_phab, color=CCAA)) + 
   geom_line(aes(Date,num_phab , color=CCAA), size=0.25,alpha=0.7) +
-  ggrepel::geom_text_repel(aes(Date+3,num_phab,label=CCAA, color=CCAA), size=3, data=tot_casos_sel, segment.alpha = 0,min.segment.length = 0.5) +
-  #scale_color_manual(values=getPalette(8)) +
+  geom_text(aes(Date+3,confirmados_phab,label=CCAA, color=CCAA), size=3, data=tot_casos_sel) +
+  #scale_color_manual(values=getPalette(20)) +
   scale_color_brewer(palette = "Set1") +
   theme(legend.position = "none") #
-#plotly::ggplotly(p,dynamicTicks=TRUE)
-p
+plotly::ggplotly(p)
 
 
 
-p <- ggplot(data_casos_ccaa) + geom_point(aes(Date,num_phab, color=CCAA)) + 
+```
+
+Escala logarítmica
+
+```{r}
+ggplot(data_casos_ccaa) + geom_point(aes(Date,num_phab, color=CCAA)) + 
   geom_line(aes(Date,num_phab, color=CCAA), size=0.25,alpha=0.7) + 
-  ggrepel::geom_text_repel(aes(Date+3,num_phab,label=CCAA, color=CCAA), size=3, data=tot_casos_sel, segment.alpha = 0,min.segment.length = 0.5) +
+  ggrepel::geom_text_repel(aes(Date+3,confirmados_phab,label=CCAA, color=CCAA), size=3, data=tot_casos_sel, segment.alpha = 0,min.segment.length = 0.5) +
   scale_y_log10() + theme(legend.position = "none") +
   scale_color_brewer(palette = "Set1") +
-  theme(legend.position = "none") +
+  theme(legend.position = "none") + labs(y="Confirmados por 100.000 hab") +
   coord_cartesian(ylim=c(1,300))
-  #scale_color_manual(values=getPalette(8))#
-#plotly::ggplotly(p,dynamicTicks=TRUE)
-p
 ```
+
+
+
 
 ### Ajustes y tiempos de duplicación
 
 
 ```{r}
-cut_fit_date ="2020-03-14"
+cut_fit_date ="2020-03-15"
+
 data_casos_ccaa <- data_casos_ccaa %>%  mutate(t=as.numeric(Date-min(Date)))
 
 exp_fits <- data_casos_ccaa %>% filter(Date>=cut_fit_date) %>% #filter(num>50) %>%  
@@ -750,27 +762,29 @@ fitted_data = exp_fits %>%
 
 ggplot(data_casos_ccaa) + geom_point(aes(Date,num_phab, color=CCAA)) + 
       geom_line(aes(Date,fitted, color=CCAA), data=fitted_data) +
-      ggrepel::geom_text_repel(aes(Date+5,num_phab,label=CCAA, color=CCAA), 
+      ggrepel::geom_text_repel(aes(Date+5,confirmados_phab,label=CCAA, color=CCAA), 
                                size=3, data=tot_casos_sel, segment.alpha = 0,min.segment.length = 0.5) +
   theme(legend.position = "none") +
   scale_color_brewer(palette = "Set1") +
   theme(legend.position = "none") +
   coord_cartesian(ylim=c(1,300))
   
+```
 
+
+```{r}
 ggplot(data_casos_ccaa) + geom_point(aes(Date,num_phab, color=CCAA)) + 
       geom_line(aes(Date,fitted, color=CCAA), data=fitted_data) +
-      ggrepel::geom_text_repel(aes(Date+5,num_phab,label=CCAA, color=CCAA), 
+      ggrepel::geom_text_repel(aes(Date+5,confirmados_phab,label=CCAA, color=CCAA), 
                                size=3, data=tot_casos_sel, segment.alpha = 0,min.segment.length = 0.5) +
   scale_y_log10() + 
   theme(legend.position = "none") +
   scale_color_brewer(palette = "Set1") +
   theme(legend.position = "none") +
   coord_cartesian(ylim=c(1,300))
-
 ```
 
-### Tasa duplicación dinámica
+### Tiempo duplicación dinámico
 
 ```{r}
 fit_window=7 # days
@@ -801,38 +815,33 @@ ggplot(din_dupl_ccaa) + geom_point(aes(fdate,dupl_t, color=CCAA)) +
 
 ##  Fallecidos
 
-```{r}
-tot_muertes_ccaa <- data_ccaa %>% group_by(CCAA) %>% filter(tipo=="muertes", Date==max(Date), !(CCAA %in% c("Ceuta","Melilla"))) 
-   
-# cases per 100000 hab
-tot_muertes_ccaa <- tot_muertes_ccaa %>% mutate(num_phab = 1e5*num/pob) %>% arrange(-num_phab)
-
-tot_muertes_ccaa
-```
-
 ### Mapa 
 
 ```{r}
 
-shpmap <- merge(shp_ccaa,tot_muertes_ccaa, by=c("cod_ine")) 
-
-pal_muertes <- colorNumeric("YlOrRd",shpmap$num_phab,
+pal_muertes <- colorNumeric("YlOrRd",shpmap$muertes_phab,
                         na.color = "transparent")
 
 
 popup_dat <- paste0("<strong>CCAA: </strong>", 
                             shpmap$CCAA,
+                            "<br><strong>Casos: </strong>", 
+                            round(shpmap$confirmados,0), 
+                            "<br><strong>Casos x 100000 hab </strong>",
+                            round(shpmap$confirmados_phab,1),
                             "<br><strong>Fallecidos: </strong>", 
-                            round(shpmap$num,0), 
+                            round(shpmap$muertes,0), 
                             "<br><strong>Fallecidos x 100000 hab </strong>",
-                            round(shpmap$num_phab,1))
+                            round(shpmap$muertes_phab,1))
+
 
 leaflet(data=shpmap) %>%
   addTiles() %>% 
   #setView(lng=-1.5, lat=39.85, zoom = 06) %>% 
-  addPolygons(fillColor = ~pal_muertes(num_phab),
+  addPolygons(fillColor = ~pal_muertes(muertes_phab),
               stroke = TRUE, color="grey",weight = 1, fillOpacity =0.8, popup = popup_dat) %>% 
-  addLegend(position="bottomright", title="Casos Confirmados <br> x 100000 hab", pal=pal_muertes,values = shpmap$num_phab)
+  addLegend(position="bottomright", title="Fallecidos <br> x 100000 hab", pal=pal_muertes,values = shpmap$muertes_phab)
+
 
 ```
 
@@ -846,43 +855,43 @@ ggplot(data_ccaa %>% filter(tipo=="muertes")) + geom_line(aes(Date, num_phab)) +
 
 
 ```{r}
-#sel_ccaa = c(tot_casos_ccaa$cod_ine[1:8],"02")
-#sel_ccaa <- sel_ccaa[sel_ccaa!="00"]
 
 data_muertes_ccaa = data_ccaa %>% filter(Date>=date_ini , tipo=="muertes", (cod_ine %in% sel_ccaa))
-tot_muertes_sel <- tot_muertes_ccaa %>% filter(cod_ine %in% sel_ccaa)
+tot_muertes_sel <- tot_ccaa %>% filter(cod_ine %in% sel_ccaa)
 
 
 # Hacer Gráfico dinámico - 
 
 p <- ggplot(data_muertes_ccaa) + geom_point(aes(Date,num_phab, color=CCAA)) + 
   geom_line(aes(Date,num_phab , color=CCAA), size=0.25,alpha=0.7) +
-  ggrepel::geom_text_repel(aes(Date+3,num_phab,label=CCAA, color=CCAA), size=3, data=tot_muertes_sel, segment.alpha = 0,min.segment.length = 0.5) +
+  ggrepel::geom_text_repel(aes(Date+3,muertes_phab,label=CCAA, color=CCAA), size=3, data=tot_muertes_sel, segment.alpha = 0,min.segment.length = 0.5) +
   #scale_color_manual(values=getPalette(8)) +
   scale_color_brewer(palette = "Set1") +
   theme(legend.position = "none") #
-#plotly::ggplotly(p,dynamicTicks=TRUE)
-p
+plotly::ggplotly(p)
 
 
 
-p <- ggplot(data_muertes_ccaa) + geom_point(aes(Date,num_phab, color=CCAA)) + 
-  geom_line(aes(Date,num_phab, color=CCAA), size=0.25,alpha=0.7) + 
-  ggrepel::geom_text_repel(aes(Date+3,num_phab,label=CCAA, color=CCAA), size=3, data=tot_muertes_sel, segment.alpha = 0,min.segment.length = 0.5) +
-  scale_y_log10() + theme(legend.position = "none") +
+```
+
+```{r}
+ggplot(data_muertes_ccaa) + geom_point(aes(Date,num_phab, color=CCAA)) + 
+  geom_line(aes(Date,num_phab , color=CCAA), size=0.25,alpha=0.7) +
+  ggrepel::geom_text_repel(aes(Date+3,muertes_phab,label=CCAA, color=CCAA), size=3, data=tot_muertes_sel, segment.alpha = 0,min.segment.length = 0.5) +
+  #scale_color_manual(values=getPalette(8)) +
   scale_color_brewer(palette = "Set1") +
   theme(legend.position = "none") +
-  coord_cartesian(ylim=c(1,30))
-  #scale_color_manual(values=getPalette(8))#
-#plotly::ggplotly(p,dynamicTicks=TRUE)
-p
+  scale_y_log10() +
+  coord_cartesian(ylim=c(0.1,30))
+
 ```
+
 
 ### Ajustes y tiempos de duplicación
 
 
 ```{r}
-cut_fit_date ="2020-03-14"
+cut_fit_date ="2020-03-15"
 data_muertes_ccaa <- data_muertes_ccaa %>%  mutate(t=as.numeric(Date-min(Date)))
 
 exp_fits_muertes <- data_muertes_ccaa %>% filter(Date>=cut_fit_date, num>0) %>% #filter(num>50) %>%  
@@ -908,7 +917,7 @@ fitted_data_muertes = exp_fits_muertes %>%
 
 ggplot(data_muertes_ccaa) + geom_point(aes(Date,num_phab, color=CCAA)) + 
       geom_line(aes(Date,fitted, color=CCAA), data=fitted_data_muertes) +
-      ggrepel::geom_text_repel(aes(Date+5,num_phab,label=CCAA, color=CCAA), 
+      ggrepel::geom_text_repel(aes(Date+5,muertes_phab,label=CCAA, color=CCAA), 
                                size=3, data=tot_muertes_sel, segment.alpha = 0,min.segment.length = 0.5) +
   theme(legend.position = "none") +
   scale_color_brewer(palette = "Set1") +
@@ -916,9 +925,12 @@ ggplot(data_muertes_ccaa) + geom_point(aes(Date,num_phab, color=CCAA)) +
   coord_cartesian(ylim=c(0,20))
   
 
+```
+
+```{r}
 ggplot(data_muertes_ccaa) + geom_point(aes(Date,num_phab, color=CCAA)) + 
       geom_line(aes(Date,fitted, color=CCAA), data=fitted_data_muertes) +
-      ggrepel::geom_text_repel(aes(Date+5,num_phab,label=CCAA, color=CCAA), 
+      ggrepel::geom_text_repel(aes(Date+5,muertes_phab,label=CCAA, color=CCAA), 
                                size=3, data=tot_muertes_sel, segment.alpha = 0,min.segment.length = 0.5) +
   scale_y_log10() + labs(y="Fallecidos por 100000 hab") +
   theme(legend.position = "none") +
@@ -928,7 +940,8 @@ ggplot(data_muertes_ccaa) + geom_point(aes(Date,num_phab, color=CCAA)) +
 
 ```
 
-### Tasa duplicación dinámica
+
+### Tiempo duplicación dinámico
 
 ```{r}
 fit_window=7 # days
@@ -953,17 +966,25 @@ ggplot(din_dupl_muertes_ccaa) + geom_point(aes(fdate,dupl_t, color=CCAA)) +
                            segment.alpha = 0,min.segment.length = 0.5) +
   theme(legend.position="none") +
   scale_color_brewer(palette="Set1") +
-  labs(y="Tiempo de duplicación de casos (dias)", title="Tiempos de duplicacion en ventana movil de una semana antes de la fecha")
+  labs(y="Tiempo de duplicación de fallecidos (dias)", title="Tiempos de duplicaci en ventana movil de una semana antes de la fecha")
 
 ```
 
 
 
-# Differential equations
+# Modelos epidemiológicos
 
-https://staff.math.su.se/hoehle/blog/2020/03/16/flatteningthecurve.html
+Modelos epidemiológicos formulados en base a ecuaciones diferenciales que describen la dinámica de la infección pueden encontrase aquí:
 
-https://timchurches.github.io/blog/posts/2020-03-10-modelling-the-effects-of-public-health-interventions-on-covid-19-transmission-part-1/
+- <https://staff.math.su.se/hoehle/blog/2020/03/16/flatteningthecurve.html>
 
-https://blog.ephorie.de/epidemiology-how-contagious-is-novel-coronavirus-2019-ncov
+- <https://timchurches.github.io/blog/posts/2020-03-10-modelling-the-effects-of-public-health-interventions-on-covid-19-transmission-part-1/>
+
+- <https://blog.ephorie.de/epidemiology-how-contagious-is-novel-coronavirus-2019-ncov>
+
+Otros basados, adeás en datos de movilidad geográfica:
+
+- <https://covid-19-risk.github.io/map/>
+- <https://covid-19-sds.github.io/>
+
 
