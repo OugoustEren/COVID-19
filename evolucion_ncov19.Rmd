@@ -74,20 +74,25 @@ data <- data %>% mutate(Date=as.Date(Date,format="%m/%d/%y"))
 # Delete data from 2020-03-12. Same data as previous day
 data <- data %>% filter(Date!="2020-03-12")
 data_w <- data %>% pivot_wider(id_cols = c("Country/Region","Province/State","Date"), names_from = "tipo", values_from = "num")
-data_w <- data_w %>% mutate(activos = confirmados - recuperados -muertes)
+data_w <- data_w %>% mutate(activos = confirmados - recuperados - muertes)
 ```
 
 
 ```{r}
-last_data <- data %>% group_by(tipo,`Province/State`,`Country/Region`) %>% filter(Date==max(Date))  
-last_data_w <- data_w %>% group_by(`Province/State`,`Country/Region`) %>% filter(Date==max(Date))  
+last_data <- data %>% group_by(tipo,`Province/State`,`Country/Region`) %>% filter(!is.na(num)) %>%  filter(Date==max(Date))  
+last_data_w <- data_w %>% group_by(`Province/State`,`Country/Region`) %>% filter(!is.na(confirmados)) %>%  filter(Date==max(Date))  
 ```
 
 
 ## Totales por país
 
 ```{r}
-tot_country <-last_data_w %>% group_by(`Country/Region`) %>% summarise_at(vars(confirmados:recuperados), sum) %>% arrange(desc(confirmados))
+tot_country <- last_data %>% group_by(tipo,`Country/Region`) %>% summarise(num=sum(num)) %>% 
+  pivot_wider(id_cols = c("Country/Region"), names_from = "tipo", values_from = "num") %>% 
+  arrange(desc(confirmados))
+
+# tot_country <-last_data_w %>% group_by(`Country/Region`,Date) %>% 
+#   summarise_at(vars(confirmados:recuperados), ~sum(.,na.rm=TRUE)) %>% arrange(desc(confirmados))
 
 # Calculamos tasas de mortalidad y recuperación 
 
@@ -102,8 +107,8 @@ datatable(tot_country) %>% formatRound(c("mort_rate", "rec_rate"),1)
 
 
 ```{r}
-ev_ctry <- data %>% group_by(`Country/Region`,Date, tipo) %>% summarise(num=sum(num))
-ev_ctry_w <- data_w %>% group_by(`Country/Region`,Date) %>% summarise_at(.vars=vars(confirmados:activos),sum)
+ev_ctry <- data %>% group_by(`Country/Region`,Date, tipo) %>% summarise(num=sum(num, na.rm=TRUE))
+ev_ctry_w <- data_w %>% group_by(`Country/Region`,Date) %>% summarise_at(.vars=vars(confirmados:activos),~sum(.,na.rm=TRUE))
 ```
 
 ## Casos Confirmados
@@ -141,7 +146,7 @@ ggplot(ev_ctry_w %>% filter(`Country/Region` %in% sel.ctry)) + geom_line(aes(Dat
 Log 
 
 ```{r}
-ggplot(ev_ctry_w %>% filter(`Country/Region` %in% sel.ctry)) + geom_line(aes(Date,activos, group=1)) +
+ggplot(ev_ctry_w %>% filter(`Country/Region` %in% sel.ctry, activos>0)) + geom_line(aes(Date,activos, group=1)) +
   facet_wrap(~`Country/Region`, scales="free_y") + scale_y_log10()
 
 ```
