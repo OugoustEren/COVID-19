@@ -27,6 +27,8 @@ library(DT)
 ```
 
 
+*Última actualización:* `r Sys.Date()`
+
 # Introducción 
 
 Las fuentes de los datos utilizadas en este estudio son las siguientes: 
@@ -49,31 +51,40 @@ Otros enlaces a dashboards o análisis interesantes son:
 ```{r}
 # Internacionales 
 
-#confirmados <- readr::read_csv("https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_19-covid-Confirmed.csv")
+confirmados_orig <- readr::read_csv("https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_global.csv")
 
-confirmados <- readr::read_csv("https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_global.csv")
+muertes_orig <- readr::read_csv("https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_deaths_global.csv")
 
-# muertes <- readr::read_csv("https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_19-covid-Deaths.csv")
-
-muertes <- readr::read_csv("https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_deaths_global.csv")
-
-
-recuperados <- readr::read_csv("https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_19-covid-Recovered.csv")
+recuperados_orig <- readr::read_csv("https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_recovered_global.csv")
 
 ```
 
 
 ```{r}
-data <- bind_rows(
-  confirmados %>% gather(key="Date",value="num",-(1:4)) %>% mutate(tipo="confirmados") %>% select(tipo,everything()),
-  muertes %>% gather(key="Date",value="num",-(1:4)) %>% mutate(tipo="muertes") %>% select(tipo,everything()),
-  recuperados %>% gather(key="Date",value="num",-(1:4)) %>% mutate(tipo="recuperados") %>% select(tipo,everything())
-)
+confirmados <- confirmados_orig %>% gather(key="Date",value="num",-(1:4)) %>% mutate(tipo="confirmados") %>% 
+  select(tipo,everything()) %>% mutate(Date=as.Date(Date,format="%m/%d/%y"))
 
-data <- data %>% mutate(Date=as.Date(Date,format="%m/%d/%y"))
+muertes <- muertes_orig %>% gather(key="Date",value="num",-(1:4)) %>% mutate(tipo="muertes") %>% 
+  select(tipo,everything()) %>% mutate(Date=as.Date(Date,format="%m/%d/%y"))
+
+recuperados <- recuperados_orig %>% gather(key="Date",value="num",-(1:4)) %>% mutate(tipo="recuperados") %>% 
+  select(tipo,everything())%>% mutate(Date=as.Date(Date,format="%m/%d/%y"))
+
+
+data <- bind_rows(confirmados, muertes)
+
+data_w <- data  %>% pivot_wider(id_cols = c("Country/Region","Province/State","Date"), names_from = "tipo", values_from = "num")
+
+# Añadimos recuperados
+data <- bind_rows(data, recuperados)
+
+data_w <- data_w %>% left_join(recuperados %>% select("Country/Region","Province/State","Date","num"), by=c("Country/Region","Province/State","Date")) %>% rename(recuperados=num)
+
+
+#data$`Province/State`[is.na(data$`Province/State`)] <- data$`Country/Region`[is.na(data$`Province/State`)]
 # Delete data from 2020-03-12. Same data as previous day
-data <- data %>% filter(Date!="2020-03-12")
-data_w <- data %>% pivot_wider(id_cols = c("Country/Region","Province/State","Date"), names_from = "tipo", values_from = "num")
+#data <- data %>% filter(Date!="2020-03-12")
+
 data_w <- data_w %>% mutate(activos = confirmados - recuperados - muertes)
 ```
 
@@ -129,18 +140,19 @@ Escala logarítmica
 ```{r}
 
 ggplot(ev_ctry %>% filter(`Country/Region` %in% sel.ctry, tipo=="confirmados")) + geom_line(aes(Date,num, group=1)) +
-  facet_wrap(~`Country/Region`, scales="free_y") + labs(y="Confirmados") + theme(axis.text.x = element_text(angle=45, hjust = 1))+ 
+  facet_wrap(~`Country/Region`, scales="free_y") + 
+  labs(y="Confirmados") + theme(axis.text.x = element_text(angle=45, hjust = 1))+ 
   scale_y_log10()
 
 ```
 
 
 
-## Casos activos (Confirmados .- Recuperados)
+## Casos activos (Confirmados - Recuperados)
 
 ```{r}
-ggplot(ev_ctry_w %>% filter(`Country/Region` %in% sel.ctry)) + geom_line(aes(Date,activos, group=1)) +
-  facet_wrap(~`Country/Region`, scales="free_y") 
+ggplot(ev_ctry_w %>% filter(`Country/Region` %in% sel.ctry, Date< Sys.Date()-1)) + geom_line(aes(Date,activos, group=1)) +
+  facet_wrap(~`Country/Region`, scales="free_y") + theme(axis.text.x = element_text(angle=60, hjust = 1))
 ```
 
 Log 
@@ -152,6 +164,12 @@ ggplot(ev_ctry_w %>% filter(`Country/Region` %in% sel.ctry, activos>0)) + geom_l
 ```
 
 ## Fallecidos
+
+```{r}
+ggplot(ev_ctry_w %>% filter(`Country/Region` %in% sel.ctry)) + geom_line(aes(Date,muertes, group=1)) +
+  facet_wrap(~`Country/Region`, scales="free_y")
+
+```
 
 ```{r}
 ggplot(ev_ctry_w %>% filter(`Country/Region` %in% sel.ctry)) + geom_line(aes(Date,muertes, group=1)) +
@@ -171,10 +189,10 @@ date_ini = "2020-03-01"
 data_casos = ev_ctry %>% filter(`Country/Region` %in% sel_ctrys, Date >= date_ini , tipo=="confirmados")
 
 p <- ggplot(data_casos) + geom_point(aes(Date,num, color=`Country/Region`)) + 
-  geom_line(aes(Date,num, color=`Country/Region`), size=0.25,alpha=0.2) + 
+  geom_line(aes(Date,num, color=`Country/Region`), size=0.25,alpha=0.5) + 
   scale_color_brewer(palette="Set1")#
 
-ggplotly(p,dynamicTicks=TRUE)
+ggplotly(p)
 
 ```
 
@@ -199,8 +217,8 @@ fig
 ### Ajustes Exponenciales
 
 ```{r}
-cut_fit_date = as.Date("2020-03-15")
-
+#cut_fit_date = as.Date("2020-03-15")
+cut_fit_date <-  Sys.Date() - 10
 data_casos <- data_casos %>% group_by(`Country/Region`) %>% mutate(t=as.numeric(Date-min(Date)))
 
 data_casos_nest <- data_casos %>% nest(-`Country/Region`) %>% group_by(`Country/Region`) %>%  
@@ -248,7 +266,7 @@ Fit antes de   `r as.character(cut_fit_date)`
 
 Plot fits antes/despúes `r cut_fit_date` y tiempos de duplicación 
 
-```{r, fig.width=10, fig.height=7}
+```{r, fig.width=10, fig.height=6}
 
 tmp =data_casos_nest %>% 
   mutate(fitted_full=map(exp_mod_full,augment),fitted_a=map(exp_mod_a,augment),fitted_b=map(exp_mod_b,augment))
@@ -348,7 +366,8 @@ data_muertes = ev_ctry %>% filter(`Country/Region` %in% sel_ctrys, Date>=date_in
 p <- ggplot(data_muertes) + geom_point(aes(Date,num, color=`Country/Region`))  +
   geom_line(aes(Date,num, color=`Country/Region`)) +
   scale_color_brewer(palette="Set1")#
-plotly::ggplotly(p,dynamicTicks=TRUE)
+
+plotly::ggplotly(p)
 
 
 
@@ -365,7 +384,8 @@ fig
 ### Ajustes Exponenciales
 
 ```{r}
-cut_fit_date = as.Date("2020-03-15")
+#cut_fit_date = as.Date("2020-03-15")
+cut_fit_date = Sys.Date() - 10
 
 data_muertes <- data_muertes %>% group_by(`Country/Region`) %>% mutate(t=as.numeric(Date-min(Date))) %>% filter(num>0)
 
@@ -414,7 +434,7 @@ Ajuste antes de `r as.character(cut_fit_date)`
 
 Plot fits and future projections
 
-```{r, fig.width=10, fig.height=7}
+```{r, fig.width=10, fig.height=6}
 
 tmp =data_muertes_nest %>% 
   mutate(fitted_full=map(exp_mod_full,augment),fitted_a=map(exp_mod_a,augment),fitted_b=map(exp_mod_b,augment))
@@ -434,7 +454,7 @@ tmp_b <- tmp %>% unnest(fitted_b) %>% mutate(fitted=exp(.fitted)) %>%
 
 # Prediccion con el modelo after
 
-future = crossing(data.frame(Date = seq(Sys.Date(),as.Date("2020-03-31"), by="days")),data.frame(Country=sel_ctrys))
+future = crossing(data.frame(Date = seq(Sys.Date(),as.Date("2020-04-10"), by="days")),data.frame(Country=sel_ctrys))
 
 future <- future %>% mutate(t=as.numeric(Date-min(data_muertes$Date)))
 
@@ -748,7 +768,7 @@ ggplot(data_casos_ccaa) + geom_point(aes(Date,num_phab, color=CCAA)) +
 
 
 ```{r}
-cut_fit_date ="2020-03-15"
+cut_fit_date = Sys.Date()- 10
 
 data_casos_ccaa <- data_casos_ccaa %>%  mutate(t=as.numeric(Date-min(Date)))
 
@@ -780,7 +800,7 @@ ggplot(data_casos_ccaa) + geom_point(aes(Date,num_phab, color=CCAA)) +
   theme(legend.position = "none") +
   scale_color_brewer(palette = "Set1") +
   theme(legend.position = "none") +
-  coord_cartesian(ylim=c(1,300))
+  coord_cartesian(ylim=c(1,max(data_casos_ccaa$num_phab)))
   
 ```
 
@@ -794,7 +814,7 @@ ggplot(data_casos_ccaa) + geom_point(aes(Date,num_phab, color=CCAA)) +
   theme(legend.position = "none") +
   scale_color_brewer(palette = "Set1") +
   theme(legend.position = "none") +
-  coord_cartesian(ylim=c(1,300))
+  coord_cartesian(ylim=c(1,max(data_casos_ccaa$num_phab)))
 ```
 
 ### Tiempo duplicación dinámico
@@ -873,14 +893,13 @@ data_muertes_ccaa = data_ccaa %>% filter(Date>=date_ini , tipo=="muertes", (cod_
 tot_muertes_sel <- tot_ccaa %>% filter(cod_ine %in% sel_ccaa)
 
 
-# Hacer Gráfico dinámico - 
 
 p <- ggplot(data_muertes_ccaa) + geom_point(aes(Date,num_phab, color=CCAA)) + 
   geom_line(aes(Date,num_phab , color=CCAA), size=0.25,alpha=0.7) +
   ggrepel::geom_text_repel(aes(Date+3,muertes_phab,label=CCAA, color=CCAA), size=3, data=tot_muertes_sel, segment.alpha = 0,min.segment.length = 0.5) +
   #scale_color_manual(values=getPalette(8)) +
   scale_color_brewer(palette = "Set1") +
-  theme(legend.position = "none") #
+  theme(legend.position = "left") #
 plotly::ggplotly(p)
 
 
@@ -895,7 +914,8 @@ ggplot(data_muertes_ccaa) + geom_point(aes(Date,num_phab, color=CCAA)) +
   scale_color_brewer(palette = "Set1") +
   theme(legend.position = "none") +
   scale_y_log10() +
-  coord_cartesian(ylim=c(0.1,30))
+  coord_cartesian(ylim=c(1,max(data_muertes_ccaa$num_phab)))
+
 
 ```
 
@@ -904,7 +924,7 @@ ggplot(data_muertes_ccaa) + geom_point(aes(Date,num_phab, color=CCAA)) +
 
 
 ```{r}
-cut_fit_date ="2020-03-15"
+cut_fit_date =Sys.Date() -10
 data_muertes_ccaa <- data_muertes_ccaa %>%  mutate(t=as.numeric(Date-min(Date)))
 
 exp_fits_muertes <- data_muertes_ccaa %>% filter(Date>=cut_fit_date, num>0) %>% #filter(num>50) %>%  
@@ -935,7 +955,7 @@ ggplot(data_muertes_ccaa) + geom_point(aes(Date,num_phab, color=CCAA)) +
   theme(legend.position = "none") +
   scale_color_brewer(palette = "Set1") +
   theme(legend.position = "none") +
-  coord_cartesian(ylim=c(0,20))
+  coord_cartesian(ylim=c(1,max(data_muertes_ccaa$num_phab)))
   
 
 ```
@@ -949,7 +969,7 @@ ggplot(data_muertes_ccaa) + geom_point(aes(Date,num_phab, color=CCAA)) +
   theme(legend.position = "none") +
   scale_color_brewer(palette = "Set1") +
   theme(legend.position = "none") +
-  coord_cartesian(ylim=c(0.1,30))
+  coord_cartesian(ylim=c(1,max(data_muertes_ccaa$num_phab)))
 
 ```
 
@@ -983,9 +1003,23 @@ ggplot(din_dupl_muertes_ccaa) + geom_point(aes(fdate,dupl_t, color=CCAA)) +
 
 ```
 
+# Italia
 
 
-# Modelos epidemiológicos
+```{r, eval=FALSE}
+url_base <- "https://raw.githubusercontent.com/pcm-dpc/COVID-19/master/dati-regioni"
+data_italia <- readr::read_csv(paste0(url_base,"/dpc-covid19-ita-regioni.csv"))
+last_italia <- data_italia %>% group_by(denominazione_regione) %>% filter(data==max(data))
+
+last_italia %>% arrange(desc(totale_casi)) %>% mutate(mort_rate=deceduti/totale_casi,rec_rate=dimessi_guariti/totale_casi) %>% 
+  select(denominazione_regione, totale_casi, deceduti, dimessi_guariti, mort_rate, rec_rate, everything())
+```
+
+
+
+
+
+# Referencias interesantes
 
 Modelos epidemiológicos formulados en base a ecuaciones diferenciales que describen la dinámica de la infección pueden encontrase aquí:
 
@@ -999,5 +1033,9 @@ Otros basados, además en datos de movilidad geográfica:
 
 - <https://covid-19-risk.github.io/map/>
 - <https://covid-19-sds.github.io/>
+
+Estimación de sub-detección de casos
+
+- <https://cmmid.github.io/topics/covid19/severity/global_cfr_estimates.html>
 
 
